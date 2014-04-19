@@ -1,5 +1,6 @@
 ebin
 deps/*/ebin
 log
+erlduce.config
 erl_crash.dump
 *.sublime-*

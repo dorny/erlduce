@@ -1,0 +1,17 @@
+#!/bin/sh
+
+if [ -z "$ERLDUCE_HOME" ]; then
+    FILE=`readlink -m "$0"`
+    DIR=`dirname "$FILE"`
+    ERLDUCE_HOME=`cd "$DIR"; cd ..; pwd;`
+fi
+
+TEMP="/tmp/erlduce.tar"
+DIRNAME=`basename $ERLDUCE_HOME`
+PARENT=`readlink -m "$ERLDUCE_HOME/.."`
+
+tar -czf "$TEMP" -C "$PARENT" "$DIRNAME"
+for HOST in $@; do
+    scp "$TEMP" "$HOST:$TEMP"
+    ssh $HOST "tar -xzf $TEMP -C $PARENT"
+done
