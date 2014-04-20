@@ -40,11 +40,16 @@ cmd("clear", _Args) ->
 
 cmd("format", _Args) ->
     application:load(erlduce),
+    % Schema
     {ok, WorkDir} = application:get_env(erlduce, work_dir),
     MnesiaDir = filename:join(WorkDir, "mnesia"),
     os:cmd("mkdir -p \""++MnesiaDir++"\""),
     application:set_env(mnesia, dir, MnesiaDir),
     mnesia:delete_schema([node()]),
+    % Blobs
+    BlobsDir = filename:join(WorkDir, "blobs"),
+    {ok, Nodes} = application:get_env(erlduce, nodes),
+    [ os:cmd("ssh '"++atom_to_list(Host)++"' \"rm '"++BlobsDir++"'/*\"")  || {Host, _} <- Nodes],
     halt();
 
 % cmd("link", Args) ->
@@ -52,11 +57,10 @@ cmd("format", _Args) ->
 
 cmd("ls", Args) ->
     OptSpecList = [{list, $l, undefined, undefined, "use a long listing format"}],
-    {Opts, StrPaths} = erlduce_utils:getopts(OptSpecList, Args, [], 0, infinity, "ls", "[paths ...]"),
+    {Opts, StrPaths} = erlduce_utils:getopts(OptSpecList, Args, [], 0, infinity, "ls", "[TAG ...]\nList TAG(s) children"),
     Paths = [list_to_binary(P) || P <-StrPaths],
     ListOpt = lists:member(list, Opts),
     lists:foreach(fun(Path)->
-        % Listing = edfs_rpc(ls, [Path]),
         Listing = erlduce_utils:resp( edfs:ls(Path)),
         p_print_ls(Listing, ListOpt)
     end, Paths),
@@ -64,12 +68,10 @@ cmd("ls", Args) ->
 
 cmd("rm", Args) ->
     OptSpecList = [{recursive, $r, "recursive", undefined, "remove tags and their contents recursively"}],
-    {Opts, StrPaths} = erlduce_utils:getopts(OptSpecList, Args, [], 0, infinity, "rm", "[paths ...]"),
+    {Opts, StrPaths} = erlduce_utils:getopts(OptSpecList, Args, [], 0, infinity, "rm", "[TAG ...]\nRemove (unlink) the TAG(s)."),
     Paths = [list_to_binary(P) || P <-StrPaths],
     Recursive = lists:member(recursive, Opts),
-    lists:foreach(fun(Path)->
-        erlduce_utils:resp( edfs:rm(Path, Recursive))
-    end, Paths),
+    [ erlduce_utils:resp( edfs:rm(Path, Recursive)) || Path <- Paths ],
     halt();
 
 
@@ -78,7 +80,7 @@ cmd("stat", _Args) ->
 
 cmd("tag", Args) ->
     OptSpecList = [{path, undefined, undefined, binary, "tag path"}],
-    {Opts, _} = erlduce_utils:getopts(OptSpecList, Args, [path], 0, 0, "tag",""),
+    {Opts, _} = erlduce_utils:getopts(OptSpecList, Args, [path], 0, 0, "tag","\nCreate new TAG"),
     Path = proplists:get_value(path, Opts),
     erlduce_utils:resp( edfs:tag(Path)),
     halt();
