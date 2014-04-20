@@ -35,8 +35,22 @@ cmd("clear", _Args) ->
     erlduce_utils:resp(edfs:clear()),
     halt();
 
-% cmd("cp", Args) ->
-    % todo;
+cmd("cp", Args) ->
+    {ok, EdfsEnv} = application:get_env(erlduce, edfs),
+    OptSpecList = [
+        {block_size, $b, "block-size", {integer, proplists:get_value(block_size, EdfsEnv, 32)}, "size of a one block"},
+        {type, $t, "type", {atom, text}, "file type, affects split method"},
+        {replica, $r, "replicas", {integer, proplists:get_value(replicas, EdfsEnv, 3)}}
+    ],
+    {Opts, StrPaths} = erlduce_utils:getopts(OptSpecList, Args, [], 2, infinity, "cp", "[SOURCE ...] TAG\nCopy files into edfs storage"),
+    Paths = [list_to_binary(P) || P <-StrPaths],
+    {SrcPaths, [Dest]} = lists:split(length(Paths)-1, Paths),
+    lists:foreach(fun(Src)->
+        Resp = edfs:cp(Src, Dest, Opts),
+        RespList = lists:flatten([Resp]),
+        [erlduce_utils:resp(R) || R <- RespList]
+    end, SrcPaths),
+    halt();
 
 cmd("format", _Args) ->
     application:load(erlduce),
@@ -58,7 +72,10 @@ cmd("format", _Args) ->
 cmd("ls", Args) ->
     OptSpecList = [{list, $l, undefined, undefined, "use a long listing format"}],
     {Opts, StrPaths} = erlduce_utils:getopts(OptSpecList, Args, [], 0, infinity, "ls", "[TAG ...]\nList TAG(s) children"),
-    Paths = [list_to_binary(P) || P <-StrPaths],
+    Paths = case StrPaths of
+        [] -> [<<"/">>];
+        _ -> [list_to_binary(P) || P <-StrPaths]
+    end,
     ListOpt = lists:member(list, Opts),
     lists:foreach(fun(Path)->
         Listing = erlduce_utils:resp( edfs:ls(Path)),

@@ -226,9 +226,12 @@ resp(Resp) ->
     case Resp of
         {badrpc, Reason} -> die(Reason);
         {error, Reason} -> die(Reason);
+        {warn, Msg} -> io:fwrite(standard_error, "warning: ~p~n", [Msg]), Resp;
+        {info, Msg} -> io:format("info: ~p~n",[Msg]);
         {ok, Value} -> Value;
         _ -> Resp
     end.
+
 
 getopts(OptSpecList0, Args, Required, MinInputs, MaxInputs, Prog, UsageText) ->
     OptSpecList = [{help, $h, "help", undefined, "display this help and exit" } | OptSpecList0],
