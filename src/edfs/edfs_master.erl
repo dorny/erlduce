@@ -20,6 +20,7 @@
 -include("erlduce.hrl").
 
 -define( MIN_AVAIL_SPACE, 100*1024*1024).
+-define( SRC_DEST_ERR, {error, {{src,Src},{dest,Dest},Reason}}).
 
 
 start() ->
@@ -190,27 +191,36 @@ p_cp(Src, Dest, Opts) ->
 p_cp_file(Src, Dest, Opts) ->
     Replicas = proplists:get_value(replicas, Opts,3),
     Compress = proplists:get_value(compress, Opts, none),
-    ok=tag(Dest),
-    edfs_lib:read_file(Src, Opts, fun
-        (eof)-> ok;
-        (Bytes) ->
-            Data = erlduce_utils:encode(binary, Bytes, Compress),
-            ok=edfs:write(Dest, Data, Replicas)
-    end).
+    case tag(Dest) of
+        ok ->
+            edfs_lib:read_file(Src, Opts, fun
+                (eof)-> ok;
+                ({error,Reason}) -> ?SRC_DEST_ERR;
+                (Bytes) ->
+                    Data = erlduce_utils:encode(binary, Bytes, Compress),
+                    edfs:write(Dest, Data, Replicas)
+            end);
+        {error, Reason} ->
+            ?SRC_DEST_ERR
+    end.
 
 
 p_cp_dir(Src, Dest, Opts) ->
     case file:list_dir(Src) of
         {ok, Filenames} ->
             Path = filename:join([Dest, filename:basename(Src)]),
-            ok = tag(Path),
-            [ p_cp(
-                filename:join([Src,Filename]),
-                filename:join([Path,Filename]),
-                Opts) || Filename <- Filenames
-            ];
+            case tag(Path) of
+                ok ->
+                    [ p_cp(
+                        filename:join([Src,Filename]),
+                        filename:join([Path,Filename]),
+                        Opts) || Filename <- Filenames
+                    ];
+                {error, Reason} ->
+                    ?SRC_DEST_ERR
+            end;
         {error, Reason} ->
-            {warn, Reason}
+            ?SRC_DEST_ERR
     end.
 
 

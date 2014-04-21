@@ -26,7 +26,7 @@ blob_filename({Path,Part}) ->
 get_available_space(Host) ->
     {ok, WorkDir} = application:get_env(erlduce, work_dir),
     Node = erlduce_utils:node(edfs,Host),
-    case rpc:call(Node, os, cmd, ["df  '"++WorkDir++"' | sed -n '2p' | awk '{print $4}'"]) of
+    case rpc:call(Node, os, cmd, ["df --block-size=1 '"++WorkDir++"' | sed -n '2p' | awk '{print $4}'"]) of
         {badrpc, Error} ->
             {error, Error};
         Space ->
@@ -78,6 +78,7 @@ split(IoDev, FileType, BlockSize, Fun) ->
         {ok, {Data, IoDev2}} ->
             Fun2 = case Fun(Data) of
                 ok -> Fun;
+                Err={error, _} -> Err;
                 NewFun when is_function(NewFun) -> NewFun
             end,
             split(IoDev2, FileType, BlockSize, Fun2);

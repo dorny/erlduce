@@ -91,6 +91,6 @@ write(Path, {Spec, Bytes}, ReplicasOrHost) ->
         {ok, {BlobID, Hosts}} ->
             edfs_slave:write(Hosts, BlobID, Bytes);
         false ->
-            lager:warning("failed to allocate space for ~p bytes at ~p @ ~p",[Size,Path,ReplicasOrHost]),
+            lager:warning("failed to allocate ~p [~p] bytes for ~p",[Size,ReplicasOrHost,Path]),
             {error, allocation_failed}
     end.
