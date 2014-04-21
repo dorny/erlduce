@@ -31,7 +31,7 @@ get_available_space(Host) ->
             {error, Error};
         Space ->
             case string:to_integer(Space) of
-                Err={error, Error}  -> Err;
+                Err={error, _Error}  -> Err;
                 {Avail, _} -> Avail
             end
     end.
@@ -105,7 +105,7 @@ read_part(text, IoDev, BlockSize) ->
 read_part(lines, IoDev, Number) ->
     read_lines(IoDev, Number, []);
 
-read_part(list, [], Number) ->
+read_part(list, [], _Number) ->
     eof;
 read_part(list, List, Number) ->
     {ok, lists:split(Number, List)}.
