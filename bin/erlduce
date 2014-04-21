@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/bin/bash
 
 if [ -z "$ERLDUCE_HOME" ]; then
     FILE=`readlink -m "$0"`

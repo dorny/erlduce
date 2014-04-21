@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 if [ -z "$ERLDUCE_HOME" ]; then
     FILE=`readlink -m "$0"`
@@ -9,9 +9,21 @@ fi
 TEMP="/tmp/erlduce.tar"
 DIRNAME=`basename $ERLDUCE_HOME`
 PARENT=`readlink -m "$ERLDUCE_HOME/.."`
+HOSTNAME=`hostname`
+
+HOSTS=`erl -noshell -eval "
+    {ok,[Config]} = file:consult(\"$ERLDUCE_HOME/erlduce.config\"),
+    Opts = proplists:get_value(erlduce,Config),
+    Nodes = proplists:get_value(nodes,Opts),
+    [io:format(\"~s \",[Host]) || {Host, _Slots} <- Nodes],
+    halt().
+"`
 
 tar -czf "$TEMP" -C "$PARENT" "$DIRNAME"
-for HOST in $@; do
-    scp "$TEMP" "$HOST:$TEMP"
-    ssh $HOST "tar -xzf $TEMP -C $PARENT"
+
+for HOST in $HOSTS; do
+    if [ "$HOST" != "$HOSTNAME" ]; then
+        scp "$TEMP" "$HOST:$TEMP"
+        ssh $HOST "tar -xzf $TEMP -C $PARENT"
+    fi
 done
