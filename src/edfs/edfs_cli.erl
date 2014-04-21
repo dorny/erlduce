@@ -16,6 +16,7 @@ usage() ->
     io:fwrite(standard_error, lists:concat([
         "Usage: edfs <command> [options ...] [args ...]~n~n",
         "Commands are:~n",
+        "  cat~n",
         "  cp~n",
         "  link~n",
         "  ls~n",
@@ -32,6 +33,12 @@ usage() ->
 cmd("help", _Args) ->
     usage();
 
+cmd("cat", Args) ->
+    OptSpecList = [{path, undefined, undefined, binary, "tag path"}],
+    {Opts, _} = erlduce_utils:getopts(OptSpecList, Args, [path], 0, 0, "tag","\nWrite Tag blobs to standard output"),
+    Path = proplists:get_value(path, Opts),
+    erlduce_utils:resp( edfs:cat(Path,standard_io)),
+    halt();
 
 cmd("cp", Args) ->
     {ok, EdfsEnv} = application:get_env(erlduce, edfs),

@@ -6,6 +6,7 @@
 
 -export([
     start_link/0,
+    read/2,
     write/3,
     delete/2
 ]).
@@ -27,6 +28,20 @@
 
 start_link() ->
     gen_server:start_link({local, ?MODULE},?MODULE, {}, []).
+
+
+read(Host, BlobID) when is_atom(Host) ->
+    case erlduce_utils:host() of
+        Host -> p_read(BlobID);
+        RemoteHost -> gen_server:call({?MODULE, ?Node(RemoteHost)}, {read, BlobID})
+    end;
+read([], BlobID) ->
+    {error, {no_hosts,BlobID}};
+read([Host| Hosts], BlobID) when is_list(Hosts) ->
+    case read(Host, BlobID) of
+        RespOk={ok,_} -> RespOk;
+        _Err -> read(Hosts, BlobID)
+    end.
 
 
 write(Host, BlobID, Bytes) when is_atom(Host) ->
@@ -55,6 +70,9 @@ delete(Host, BlobID) ->
 init(_Args) ->
     {ok, undefined}.
 
+
+handle_call( {read, BlobID}, _From, State) ->
+    {reply , p_read(BlobID), State};
 
 handle_call( {write, BlobID, Bytes, Host}, _From, State) ->
     {reply , p_write(BlobID, Bytes, Host), State};
@@ -91,6 +109,11 @@ code_change(_OldVsn, State, _Extra) ->
 %%  PRIVATE
 %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+p_read(BlobID) ->
+    Filename = edfs_lib:blob_filename(BlobID),
+    prim_file:read_file(Filename).
+
 
 p_write(BlobID, Bytes, Host) ->
     Filename = edfs_lib:blob_filename(BlobID),

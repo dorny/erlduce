@@ -4,8 +4,7 @@
 
 -export([
     start/0,
-    % cat
-    clear/0,
+    cat/2,
     cp/3,
     link/2,
     ls/1,
@@ -23,8 +22,19 @@ start() ->
     edfs_master:start().
 
 
-clear() ->
-    erlduce_utils:run_at_master(edfs_master, clear, []).
+cat(Path, IoDev) when is_binary(Path) ->
+    case erlduce_utils:run_at_master(edfs_master, blobs, [Path]) of
+        {ok, Blobs} ->
+            [p_cat_blob(Blob,IoDev) || Blob <- Blobs];
+        Err -> Err
+    end.
+p_cat_blob({BlobID, Hosts}, IoDev) ->
+    case edfs_slave:read(Hosts, BlobID) of
+        {ok, Bytes} ->
+            io:put_chars(IoDev, Bytes);
+        {error, Reason} ->
+            {error, {BlobID, Reason}}
+    end.
 
 
 cp(Src, Dest, Opts) when is_binary(Src), is_binary(Dest), is_list(Opts) ->

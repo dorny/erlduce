@@ -3,11 +3,16 @@
 -author("Michal Dorner <dorner.michal@gmail.com>").
 
 -export([
+    blobs/2,
     blob_filename/1,
     get_available_space/1,
     parent_path/1,
     children/2
 ]).
+
+
+blobs(Path, BlobsCount) ->
+    [ {Path,Part} || Part <- lists:seq(1, BlobsCount)].
 
 
 blob_filename({Path,Part}) ->

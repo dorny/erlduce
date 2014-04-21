@@ -5,7 +5,7 @@
 -export([
     start/0,
     allocate/3,
-    % cat
+    blobs/1,
     check_available_space/1,
     cp/3,
     link/2,
@@ -131,6 +131,25 @@ p_append_blob(Path, Size, Replicas) ->
     end.
 
 
+blobs(Path) ->
+    mnesia:activity(transaction, fun()->
+        case mnesia:read({edfs_tag,Path}) of
+            [#edfs_tag{blobs=Blobs}] ->
+                {ok, [p_blobs(BlobID) || BlobID <- edfs_lib:blobs(Path,Blobs)]};
+            [] ->
+                {error, not_found}
+        end
+    end).
+p_blobs(BlobID) ->
+    case mnesia:read({edfs_blob, BlobID}) of
+        [#edfs_blob{hosts=Hosts}] ->
+            {BlobID, Hosts};
+        [] ->
+            lager:error("Missing blob: ~p",[BlobID]),
+            {BlobID, []}
+    end.
+
+
 check_available_space(Force) ->
     Slaves = mnesia:ets(fun()-> mnesia:dirty_select(edfs_node,[{'_',[],['$_']}]) end),
     erlduce_utils:pmap(fun(#edfs_node{host=Host, space=OldSpace }) ->
@@ -218,7 +237,7 @@ register_blob(BlobID, Host) ->
                 Hosts = [Host | Blob#edfs_blob.hosts],
                 ok=mnesia:write(Blob#edfs_blob{hosts=Hosts});
             [] ->
-                lager:error("registering not stored blob"),
+                lager:error("Registering not stored blob"),
                 {error, not_found}
         end
     end).
@@ -238,7 +257,7 @@ p_rm(Path, Recursive, UnlinkParent) ->
         [#edfs_tag{children=Children}] when Children=/=[] andalso Recursive=:=false ->
             {error, tag_has_children};
         [#edfs_tag{children=Children, blobs=Blobs}] ->
-            [ p_delete_blob({Path, Part}) || Part <- lists:seq(1, Blobs) ],
+            [ p_delete_blob(BlobID) || BlobID <- edfs_lib:blobs(Path,Blobs) ],
             [ p_rm(Child, Recursive, false) || Child <- edfs_lib:children(Path,Children)],
             mnesia:delete({edfs_tag, Path}),
             case UnlinkParent of
