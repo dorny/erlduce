@@ -18,6 +18,7 @@
 ]).
 
 -include("erlduce.hrl").
+-include_lib("kernel/include/file.hrl").
 
 -define( MIN_AVAIL_SPACE, 100*1024*1024).
 -define( SRC_DEST_ERR, {error, {{src,Src},{dest,Dest},Reason}}).
@@ -180,13 +181,15 @@ cp(Src, Dest, Opts) ->
         [_] -> p_cp(Src, filename:join(Dest, filename:basename(Src)), Opts)
     end.
 p_cp(Src, Dest, Opts) ->
-    case filelib:is_dir(Src) of
-        true -> p_cp_dir(Src, Dest, Opts);
-        false ->
-            case filelib:is_regular(Src) of
-                true -> p_cp_file(Src, Dest, Opts);
-                false -> ok
-            end
+    case file:read_file_info(Src)  of
+        {ok, #file_info{type=directory}} ->
+            p_cp_dir(Src, Dest, Opts);
+        {ok, #file_info{type=regular}} ->
+            p_cp_file(Src, Dest, Opts);
+        {ok, _} ->
+            ok;
+        {error, Reason} ->
+            ?SRC_DEST_ERR
     end.
 p_cp_file(Src, Dest, Opts) ->
     Replicas = proplists:get_value(replicas, Opts,3),

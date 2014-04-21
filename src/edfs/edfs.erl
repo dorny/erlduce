@@ -45,7 +45,8 @@ p_cat_blob({BlobID, Spec, Hosts}, IoDev, Extract) ->
 
 
 cp(Src, Dest, Opts) when is_binary(Src), is_binary(Dest), is_list(Opts) ->
-    erlduce_utils:run_at_master(edfs_master, cp, [Src, Dest, Opts]).
+    AbsSrc = filename:absname(Src),
+    erlduce_utils:run_at_master(edfs_master, cp, [AbsSrc, Dest, Opts]).
 
 
 link(Parent, Child) when is_binary(Parent), is_binary(Child) ->
