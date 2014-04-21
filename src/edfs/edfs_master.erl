@@ -121,10 +121,10 @@ p_allocate(Path, Size,Replicas, Reset) ->
 p_append_blob(Path, Size, Replicas) ->
     case mnesia:wread({edfs_tag, Path}) of
         [Tag] ->
-            Ord = Tag#edfs_tag.blobs + 1,
-            BlobID = edfs_lib:blob_id(Path, Ord),
+            Part = Tag#edfs_tag.blobs + 1,
+            BlobID = {Path, Part},
             ok=mnesia:write(#edfs_blob{id=BlobID, size=Size, replicas=Replicas}),
-            ok=mnesia:write(Tag#edfs_tag{blobs=Ord}),
+            ok=mnesia:write(Tag#edfs_tag{blobs=Part}),
             {ok, BlobID};
         [] ->
             {error, not_found}
@@ -224,9 +224,11 @@ register_blob(BlobID, Host) ->
     end).
 
 
-rm(<<"/">>, true) ->
-    mnesia:activity(transaction, fun p_rm/3, [<<"/">>, true, false]),
-    p_insert_root();
+rm(Path= <<"/">>, Recursive) ->
+    case mnesia:activity(transaction, fun p_rm/3, [Path, Recursive, false]) of
+        true -> p_insert_root();
+        Err -> Err
+    end;
 rm(Path, Recursive) ->
     mnesia:activity(transaction, fun p_rm/3, [Path, Recursive, true]).
 p_rm(Path, Recursive, UnlinkParent) ->
@@ -236,11 +238,11 @@ p_rm(Path, Recursive, UnlinkParent) ->
         [#edfs_tag{children=Children}] when Children=/=[] andalso Recursive=:=false ->
             {error, tag_has_children};
         [#edfs_tag{children=Children, blobs=Blobs}] ->
-            [ p_delete_blob(edfs_lib:blob_id(Path, BlobOrd)) || BlobOrd <- lists:seq(1, Blobs) ],
+            [ p_delete_blob({Path, Part}) || Part <- lists:seq(1, Blobs) ],
             [ p_rm(Child, Recursive, false) || Child <- edfs_lib:children(Path,Children)],
             mnesia:delete({edfs_tag, Path}),
             case UnlinkParent of
-                true -> unlink( edfs_lib:parent_path(Path), Path);
+                true -> ok=unlink( edfs_lib:parent_path(Path), filename:basename(Path));
                 false -> ok
             end
     end.
@@ -260,7 +262,7 @@ stat(Path) ->
     mnesia:activity(ets, fun()->
         case mnesia:read({edfs_tag, Path}) of
             [#edfs_tag{children=Children, blobs=BlobsCount}] ->
-                BlobIDs = [ edfs_lib:blob_id(Path,Ord) || Ord <- lists:seq(1, BlobsCount)],
+                BlobIDs = [ {Path,Part} || Part <- lists:seq(1, BlobsCount)],
                 OwnSize = lists:foldl(fun(BlobID, Sum)->
                     case mnesia:read({edfs_blob, BlobID}) of
                         [#edfs_blob{size=BlobSize}] -> Sum+BlobSize;

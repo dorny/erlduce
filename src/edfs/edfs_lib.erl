@@ -3,25 +3,17 @@
 -author("Michal Dorner <dorner.michal@gmail.com>").
 
 -export([
-    blob_id/2,
+    blob_filename/1,
     get_available_space/1,
     parent_path/1,
     children/2
 ]).
 
--define( BLOB_ORD_LEN, 7).
 
-
-blob_id(Path, Ord) ->
-    OrdStr = if
-        Ord >= ?BLOB_ORD_LEN ->
-            integer_to_list(Ord);
-        true ->
-            L = integer_to_list(Ord),
-            string:right(L, ?BLOB_ORD_LEN - length(L), $0)
-    end,
-    BlobIdParts = [ binary:replace(Path, <<"/">>, <<"-">>, [global]), <<"-">>, list_to_binary(OrdStr) ],
-    erlang:iolist_to_binary(BlobIdParts).
+blob_filename({Path,Part}) ->
+    {ok, WorkDir} = application:get_env(erlduce, work_dir),
+    Filename = http_uri:encode( filename:join( binary_to_list(Path), integer_to_list(Part))),
+    filename:join([WorkDir, <<"blobs">>, Filename]).
 
 
 get_available_space(Host) ->

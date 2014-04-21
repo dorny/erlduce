@@ -20,11 +20,6 @@
     code_change/3
 ]).
 
--record(state, {
-    master :: atom,
-    host :: atom,
-    blobs :: string()
-}).
 
 -define( Node(Host), erlduce_utils:node(edfs,Host)).
 
@@ -58,23 +53,19 @@ delete(Host, BlobID) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 init(_Args) ->
-    {ok, WorkDir} = application:get_env(erlduce, work_dir),
-    {ok, #state{
-        host = erlduce_utils:host(),
-        blobs = filename:join(WorkDir, "blobs")
-    }}.
+    {ok, undefined}.
 
 
-handle_call( {write, BlobID, Bytes}, _From, State=#state{blobs=BlobsDir, host=Host}) ->
-    {reply , p_write(BlobID, Bytes, Host, BlobsDir), State};
+handle_call( {write, BlobID, Bytes, Host}, _From, State) ->
+    {reply , p_write(BlobID, Bytes, Host), State};
 
 handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
 
 
-handle_cast( {delete, BlobID}, State=#state{blobs=BlobsDir}) ->
-    Filename = filename:join(BlobsDir, BlobID),
-    % use internal prim_file
+handle_cast( {delete, BlobID}, State) ->
+    Filename = edfs_lib:blob_filename(BlobID),
+    % use erlang internal prim_file module
     % it's the only way to delete a file on local filesystem, rather then on master's
     prim_file:delete(Filename),
     {noreply, State};
@@ -102,14 +93,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 p_write(BlobID, Bytes, Host) ->
-    {ok, WorkDir} = application:get_env(erlduce, work_dir),
-    BlobsDir = filename:join(WorkDir, "blobs"),
-    p_write(BlobID, Bytes, Host, BlobsDir).
-
-
-p_write(BlobID, Bytes, Host, BlobsDir) ->
-    Filename = filename:join(BlobsDir, BlobID),
-    case file:write_file(Filename, Bytes,[raw]) of
+    Filename = edfs_lib:blob_filename(BlobID),
+    case file:write_file(Filename, Bytes,[raw,binary]) of
         ok  ->
             edfs:register_blob(BlobID,Host),
             ok;
