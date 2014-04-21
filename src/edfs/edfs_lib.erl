@@ -24,15 +24,15 @@ blob_filename({Path,Part}) ->
 
 
 get_available_space(Host) ->
+    {ok, WorkDir} = application:get_env(erlduce, work_dir),
     Node = erlduce_utils:node(edfs,Host),
-    case rpc:call(Node, os, cmd, ["df --output=avail --block-size=1 . | tail -n 1 | tr -d ' \n'"]) of
+    case rpc:call(Node, os, cmd, ["df  '"++WorkDir++"' | sed -n '2p' | awk '{print $4}'"]) of
         {badrpc, Error} ->
             {error, Error};
         Space ->
-            try
-                erlang:list_to_integer(Space)
-            catch
-                Error -> {error,Error}
+            case string:to_integer(Space) of
+                Err={error, Error}  -> Err;
+                {Avail, _} -> Avail
             end
     end.
 
