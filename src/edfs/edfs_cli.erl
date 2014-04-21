@@ -68,6 +68,7 @@ cmd("cp", Args) ->
 
 cmd("format", _Args) ->
     application:load(erlduce),
+    erlduce_utils:run_at_master(init, stop, []),
     % Schema
     {ok, WorkDir} = application:get_env(erlduce, work_dir),
     MnesiaDir = filename:join(WorkDir, "mnesia"),

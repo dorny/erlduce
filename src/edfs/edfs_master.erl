@@ -261,11 +261,8 @@ register_blob(BlobID, Host) ->
     end).
 
 
-rm(Path= <<"/">>, Recursive) ->
-    case mnesia:activity(transaction, fun p_rm/3, [Path, Recursive, false]) of
-        true -> p_insert_root();
-        Err -> Err
-    end;
+rm(Path= <<"/">>, _) ->
+    {error, cannot_remove_root};
 rm(Path, Recursive) ->
     mnesia:activity(transaction, fun p_rm/3, [Path, Recursive, true]).
 p_rm(Path, Recursive, UnlinkParent) ->
