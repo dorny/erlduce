@@ -19,7 +19,8 @@ generate_id() ->
     iolist_to_binary(HashList).
 
 
-get_available_space(Node) ->
+get_available_space(Host) ->
+    Node = erlduce_utils:node(edfs,Host),
     case rpc:call(Node, os, cmd, ["df --output=avail --block-size=1 . | tail -n 1 | tr -d ' \n'"]) of
         {badrpc, Error} ->
             {error, Error};

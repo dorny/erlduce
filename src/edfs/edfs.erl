@@ -9,11 +9,12 @@
     cp/3,
     % link
     ls/1,
+    register_blob/2,
     rm/2,
     % stat/1
     tag/1,
-    write/2,
-    write_local/1
+    write/1,
+    write/2
 ]).
 
 
@@ -33,6 +34,10 @@ ls(Path) when is_binary(Path) ->
     erlduce_utils:run_at_master(edfs_master, ls, [Path]).
 
 
+register_blob(BlobID, Host) ->
+    erlduce_utils:run_at_master(edfs_master, register_blob, [BlobID, Host]).
+
+
 rm(Path, Recursive) when is_binary(Path), is_boolean(Recursive) ->
     erlduce_utils:run_at_master(edfs_master, rm, [Path, Recursive]).
 
@@ -41,24 +46,18 @@ tag(Path) when is_binary(Path) ->
     erlduce_utils:run_at_master(edfs_master, tag, [Path]).
 
 
-write(Bytes, Replicas) when is_binary(Bytes), is_integer(Replicas) ->
+write(Bytes) ->
+    {ok, EdfsEnv} = application:get_env(erlduce, edfs),
+    Replicas = proplists:get_value(replicas, EdfsEnv, 3),
+    write(Bytes, Replicas).
+write(Bytes, local) ->
+    write(Bytes, erlduce_utils:host(node()));
+write(Bytes, ReplicasOrHost) when is_binary(Bytes) ->
     Size = byte_size(Bytes),
-    case erlduce_utils:run_at_master(edfs_master, allocate, [Size,Replicas]) of
-        {ok, {BlobId, Hosts}} ->
-            true;
+    case erlduce_utils:run_at_master(edfs_master, allocate, [Size,ReplicasOrHost]) of
+        {ok, {BlobID, Hosts}} ->
+            edfs_slave:write(Hosts, BlobID, Bytes);
         false ->
-            lager:warning("failed to allocate space for ~p * ~p bytes",[Replicas, Size]),
-            false
-    end.
-
-write_local(Bytes) when is_binary(Bytes) ->
-    Size = byte_size(Bytes),
-    Host = erlduce_utils:host(),
-    case erlduce_utils:run_at_master(edfs_master, allocate_at, [Size, Host]) of
-        {ok, BlobId} ->
-            lager:info("~p: ~p",[BlobId, Host]),
-            true;
-        false ->
-            lager:warning("failed to allocate space for ~p bytes at ~p",[Size, Host]),
-            false
+            lager:warning("failed to allocate space for [~p]  ~p bytes",[ReplicasOrHost, Size]),
+            {error, allocation_failed}
     end.

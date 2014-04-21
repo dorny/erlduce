@@ -5,13 +5,13 @@
 -export([
     start/0,
     allocate/2,
-    allocate_at/2,
     % cat
     check_available_space/1,
     cp/3,
     delete_blob/1,
     link/2,
     ls/1,
+    register_blob/2,
     rm/2,
     % stat/1
     tag/1,
@@ -64,15 +64,19 @@ p_init_mnesia_tables() ->
     ]),
     p_insert_root().
 p_insert_root() ->
-    ok = mnesia:activity(transaction, fun()-> mnesia:write(#edfs_tag{path=(<<"/">>)}) end).
+    mnesia:activity(transaction, fun()-> ok=mnesia:write(#edfs_tag{path=(<<"/">>)}) end).
 p_init_slaves() ->
     {ok, SlavesDef} = application:get_env(erlduce, nodes),
     Hosts = [ Host || {Host, _Slots} <- SlavesDef],
 
     Slaves = erlduce_utils:start_slaves(edfs,Hosts),
-    EDFSNodes = [ #edfs_node{host=Host,node=Node} || {Host,Node} <- Slaves],
+    erlduce_utils:pmap(fun({_,Node})->
+        {ok,Pid} = rpc:call(Node, edfs_sup, start_link, [])
+    end,Slaves),
+
+    EDFSNodes = [ #edfs_node{host=Host} || {Host,_} <- Slaves],
     mnesia:ets(fun()->
-        [ mnesia:dirty_write(Node) || Node <- EDFSNodes]
+        [ ok=mnesia:dirty_write(Node) || Node <- EDFSNodes]
     end),
 
     check_available_space(true),
@@ -80,16 +84,27 @@ p_init_slaves() ->
     ok.
 
 
-allocate(Size, Replicas) ->
+allocate(Size, Host) when is_atom(Host)->
+    mnesia:activity(transaction, fun() ->
+        case mnesia:wread({edfs_node, Host}) of
+            [Slave=#edfs_node{space=Space}] when Space > Size+?MIN_AVAIL_SPACE ->
+                ok=mnesia:write(Slave#edfs_node{space=Space-Size}),
+                {ok, BlobID} = blob(Size, 1),
+                {ok, {BlobID, Host}};
+            _ ->
+                false
+        end
+    end);
+allocate(Size, Replicas) when is_integer(Replicas)->
     p_allocate(Size, Replicas, true).
 p_allocate(Size,Replicas, Reset) ->
     Res = mnesia:activity(transaction, fun()->
-        MatchSpec = [{#edfs_node{space='$1', used=false, _='_' }, [{'>', '$1', Size}],['$_']}],
+        MatchSpec = [{#edfs_node{space='$1', used=false, _='_' }, [{'>', '$1', Size+?MIN_AVAIL_SPACE}],['$_']}],
         case mnesia:select(edfs_node, MatchSpec, Replicas, write) of
             '$end_of_table' ->
                 false;
             {Slaves, _} ->
-                [mnesia:write(Slave#edfs_node{space=Space-Size, used=true}) || Slave=#edfs_node{space=Space} <- Slaves],
+                [ok=mnesia:write(Slave#edfs_node{space=Space-Size, used=true}) || Slave=#edfs_node{space=Space} <- Slaves],
                 Hosts = [Host || Slave=#edfs_node{host=Host} <- Slaves],
                 {ok, Hosts}
         end
@@ -106,24 +121,12 @@ p_allocate(Size,Replicas, Reset) ->
     end.
 
 
-allocate_at(Size, Host) ->
-    mnesia:activity(transaction, fun() ->
-        case mnesia:wread({edfs_node, Host}) of
-            [Slave=#edfs_node{space=Space}] when Space > Size ->
-                mnesia:write(Slave#edfs_node{space=Space-Size}),
-                blob(Size, 1);
-            _ ->
-                false
-        end
-    end).
-
-
 blob(Size, Replicas) ->
     BlobID = edfs_lib:generate_id(),
     Res = mnesia:activity(transaction, fun()->
         case mnesia:wread({edfs_blob, BlobID})  of
             [] ->
-                mnesia:write(#edfs_blob{id=BlobID, size=Size, replicas=Replicas}),
+                ok=mnesia:write(#edfs_blob{id=BlobID, size=Size, replicas=Replicas}),
                 {ok, BlobID};
         _ ->
             false
@@ -137,19 +140,19 @@ blob(Size, Replicas) ->
 
 check_available_space(Force) ->
     Slaves = mnesia:ets(fun()-> mnesia:dirty_select(edfs_node,[{'_',[],['$_']}]) end),
-    erlduce_utils:pmap(fun(#edfs_node{host=Host, node=Node, space=OldSpace }) ->
-        case edfs_lib:get_available_space(Node) of
+    erlduce_utils:pmap(fun(#edfs_node{host=Host, space=OldSpace }) ->
+        case edfs_lib:get_available_space(Host) of
             Space when ((Space<OldSpace) orelse Force) ->
                 mnesia:activity(transaction, fun()->
                     case mnesia:wread({edfs_node, Host}) of
                         [Slave] when ((Space<Slave#edfs_node.space) orelse Force) ->
-                            mnesia:write(Slave#edfs_node{ space=Space});
+                            ok=mnesia:write(Slave#edfs_node{ space=Space});
                         _ ->
                             ok
                     end
                 end);
             {error, Error} ->
-                lager:warning("Failed to check available disk space on: ~p: ~p ",[Node, Error]);
+                lager:warning("Failed to check available disk space on: ~p: ~p ",[Host, Error]);
             _ ->
                 ok
         end
@@ -192,7 +195,15 @@ p_cp_dir(Src, Dest, Opts) ->
 
 
 delete_blob(BlobID) ->
-    todo.
+    mnesia:activity(transaction, fun()->
+        case mnesia:wread({edfs_blob, BlobID}) of
+            [#edfs_blob{hosts=Hosts}] ->
+                [ edfs_slave:delete(Host, BlobID) || Host <- Hosts],
+                ok=mnesia:delete({edfs_blob, BlobID});
+            [] ->
+                {error, not_found}
+        end
+    end).
 
 
 link(Parent, Child) ->
@@ -200,8 +211,7 @@ link(Parent, Child) ->
         case mnesia:wread({edfs_tag, Parent}) of
             [ ParentTag ] ->
                 Children = ParentTag#edfs_tag.children,
-                mnesia:write(ParentTag#edfs_tag{ children=[Child|Children]}),
-                ok;
+                ok=mnesia:write(ParentTag#edfs_tag{ children=[Child|Children]});
             [] ->
                 {error, parent_not_found}
         end
@@ -215,6 +225,19 @@ ls(Path) ->
         case mnesia:select(edfs_tag,[{#edfs_tag{path=Path, children='$1', _='_'}, [], ['$1']}]) of
             [Chidlren] -> {ok, Chidlren};
             [] ->  {error, not_found}
+        end
+    end).
+
+
+register_blob(BlobID, Host) ->
+    mnesia:activity(transaction, fun()->
+        case mnesia:wread({edfs_blob, BlobID}) of
+            [Blob] ->
+                Hosts = [Host | Blob#edfs_blob.hosts],
+                ok=mnesia:write(Blob#edfs_blob{hosts=Hosts});
+            [] ->
+                lager:error("registering not stored blob"),
+                {error, not_found}
         end
     end).
 
@@ -261,7 +284,7 @@ unlink(Parent, Child) ->
         case mnesia:wread({edfs_tag, Parent}) of
             [Tag] ->
                 Children = lists:delete(Child, Tag#edfs_tag.children),
-                mnesia:write(Tag#edfs_tag{ children=Children });
+                ok = mnesia:write(Tag#edfs_tag{ children=Children });
             [] ->
                 {error, not_found}
         end
@@ -282,6 +305,6 @@ unlink(Parent, Child) ->
 p_mark_all_unused() ->
     mnesia:activity(transaction, fun()->
         Nodes = mnesia:select(edfs_node,[{'_',[],['$_']}]),
-        [ mnesia:write(Node#edfs_node{used=false}) || Node <- Nodes],
+        [ ok=mnesia:write(Node#edfs_node{used=false}) || Node <- Nodes],
         ok
     end).

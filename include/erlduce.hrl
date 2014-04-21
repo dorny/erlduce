@@ -2,7 +2,6 @@
 % MNESIA
 -record(edfs_node, {
     host  :: atom(),
-    node :: atom(),
     space = 0 :: number(),
     used = false :: boolean()
 }).
