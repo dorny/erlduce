@@ -30,11 +30,22 @@ if [ $# -gt 0 ]; then
     done
 else
     tar -czf "$TEMP" -C "$PARENT" "$DIRNAME"
+    WORK_DIR=`erl -noshell -eval "
+        {ok,[Config]} = file:consult(\"$ERLDUCE_HOME/erlduce.config\"),
+        Opts = proplists:get_value(erlduce,Config),
+        io:format(\"~s\",[proplists:get_value(work_dir,Opts)]),
+        halt().
+    "`
+    DIRS=""
+    for DIR in "blobs" "jobs" "mnesia"; do
+        DIRS="$DIRS '$WORK_DIR/$DIR'"
+    done
+    mkdir -p $DIRS
 
     for HOST in $HOSTS; do
         if [ "$HOST" != "$HOSTNAME" ]; then
             scp "$TEMP" "$HOST:$TEMP"
-            ssh $HOST "tar -xzf $TEMP -C $PARENT"
+            ssh $HOST "mkdir -p $DIRS; tar -xzf $TEMP -C $PARENT"
         fi
     done
 fi
