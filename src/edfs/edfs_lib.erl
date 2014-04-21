@@ -5,7 +5,8 @@
 -export([
     blob_id/2,
     get_available_space/1,
-    parent_path/1
+    parent_path/1,
+    children/2
 ]).
 
 -define( BLOB_ORD_LEN, 7).
@@ -46,3 +47,10 @@ parent_path(Path) ->
             ParentParts = lists:droplast(PathParts),
             filename:join(ParentParts)
     end.
+
+
+children(Path,Children) ->
+    lists:map(fun
+        ({link, Link}) -> Link;
+        (Child) -> filename:join(Path, Child)
+    end, Children).

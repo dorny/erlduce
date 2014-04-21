@@ -12,7 +12,7 @@
     ls/1,
     register_blob/2,
     rm/2,
-    % stat/1
+    stat/1,
     tag/1,
     unlink/2
 ]).
@@ -237,24 +237,42 @@ p_rm(Path, Recursive, UnlinkParent) ->
             {error, tag_has_children};
         [#edfs_tag{children=Children, blobs=Blobs}] ->
             [ p_delete_blob(edfs_lib:blob_id(Path, BlobOrd)) || BlobOrd <- lists:seq(1, Blobs) ],
-            p_rm_children(Path, Children, Recursive),
+            [ p_rm(Child, Recursive, false) || Child <- edfs_lib:children(Path,Children)],
             mnesia:delete({edfs_tag, Path}),
             case UnlinkParent of
                 true -> unlink( edfs_lib:parent_path(Path), Path);
                 false -> ok
             end
     end.
-p_rm_children(Path, Children, Recursive) ->
-    lists:foreach(fun
-        ({link, Link}) -> p_rm(Link, Recursive, false);
-        (Child) -> p_rm( filename:join(Path, Child), Recursive, false)
-    end, Children).
 p_delete_blob(BlobID) ->
     mnesia:activity(transaction, fun()->
         case mnesia:wread({edfs_blob, BlobID}) of
             [#edfs_blob{hosts=Hosts}] ->
                 [ edfs_slave:delete(Host, BlobID) || Host <- Hosts],
                 ok=mnesia:delete({edfs_blob, BlobID});
+            [] ->
+                {error, not_found}
+        end
+    end).
+
+
+stat(Path) ->
+    mnesia:activity(ets, fun()->
+        case mnesia:read({edfs_tag, Path}) of
+            [#edfs_tag{children=Children, blobs=BlobsCount}] ->
+                BlobIDs = [ edfs_lib:blob_id(Path,Ord) || Ord <- lists:seq(1, BlobsCount)],
+                OwnSize = lists:foldl(fun(BlobID, Sum)->
+                    case mnesia:read({edfs_blob, BlobID}) of
+                        [#edfs_blob{size=BlobSize}] -> Sum+BlobSize;
+                        [] -> Sum
+                    end
+                end, 0, BlobIDs),
+                ChildrenStats = [stat(Child) || Child <- edfs_lib:children(Path,Children)],
+                TotalSize = lists:foldl(fun
+                    ({_C,_B,_S,T},Sum)-> Sum+T;
+                    (_,Sum) -> Sum
+                end, OwnSize, ChildrenStats),
+                {length(Children), BlobsCount, OwnSize, TotalSize};
             [] ->
                 {error, not_found}
         end

@@ -11,7 +11,7 @@
     ls/1,
     register_blob/2,
     rm/2,
-    % stat/1
+    stat/1,
     tag/1,
     unlink/2,
     write/2,
@@ -45,6 +45,10 @@ register_blob(BlobID, Host) ->
 
 rm(Path, Recursive) when is_binary(Path), is_boolean(Recursive) ->
     erlduce_utils:run_at_master(edfs_master, rm, [Path, Recursive]).
+
+
+stat(Path) when is_binary(Path) ->
+    erlduce_utils:run_at_master(edfs_master, stat, [Path]).
 
 
 tag(Path) when is_binary(Path) ->

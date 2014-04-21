@@ -97,9 +97,16 @@ cmd("rm", Args) ->
     [ erlduce_utils:resp( edfs:rm(Path, Recursive)) || Path <- Paths ],
     halt();
 
-
-cmd("stat", _Args) ->
-    todo;
+cmd("stat", Args) ->
+    OptSpecList = [{path, undefined, undefined, binary, "tag path"}],
+    {Opts, _} = erlduce_utils:getopts(OptSpecList, Args, [path], 0, 0, "tag","\nGet Tag stats"),
+    Path = proplists:get_value(path, Opts),
+    {C,B,S,T} = erlduce_utils:resp( edfs:stat(Path)),
+    io:format("children: ~p~n",[C]),
+    io:format("blobs: ~p~n",[B]),
+    io:format("size: ~s~n",[erlduce_utils:format_size(S)]),
+    io:format("total: ~s~n",[erlduce_utils:format_size(T)]),
+    halt();
 
 cmd("tag", Args) ->
     OptSpecList = [{path, undefined, undefined, binary, "tag path"}],

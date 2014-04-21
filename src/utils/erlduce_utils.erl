@@ -34,7 +34,8 @@
     resp/1,
     getopts/7,
     die/1,
-    die/2
+    die/2,
+    format_size/1
 ]).
 
 
@@ -267,3 +268,20 @@ die(Reason) ->
 die(Format, Args) ->
     io:fwrite(standard_error, "error: "++Format++"~n", [Args]),
     halt(1).
+
+
+format_size(S) when S >= 1024*1024*1024 -> p_format_size(S, 1024*1024*1024, "GB");
+format_size(S) when S >= 1024*1024 -> p_format_size(S, 1024*1024, "MB");
+format_size(S) when S >= 1024 -> p_format_size(S, 1024, "KB");
+format_size(S) -> integer_to_list(S)++" B".
+
+p_format_size(S, U, Unit) ->
+    % F = round((S*10)/U)/10,
+    % float_to_list(F)++" "++Unit.
+    MB = S/U, N = trunc(MB), D = round((MB-N)*10),
+    if
+        D>=10 -> integer_to_list(N+1)++" "++Unit;
+        D>0 -> integer_to_list(N)++"."++integer_to_list(D)++" "++Unit;
+        true -> integer_to_list(N)++" "++Unit
+    end.
+
