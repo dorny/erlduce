@@ -4,7 +4,7 @@
 
 -export([
     start/0,
-    cat/2,
+    cat/3,
     cp/3,
     link/2,
     ls/1,
@@ -22,16 +22,23 @@ start() ->
     edfs_master:start().
 
 
-cat(Path, IoDev) when is_binary(Path) ->
+cat(Path, IoDev, Extract) when is_binary(Path) ->
     case erlduce_utils:run_at_master(edfs_master, blobs, [Path]) of
         {ok, Blobs} ->
-            [p_cat_blob(Blob,IoDev) || Blob <- Blobs];
+            [p_cat_blob(Blob,IoDev,Extract) || Blob <- Blobs];
         Err -> Err
     end.
-p_cat_blob({BlobID, Hosts}, IoDev) ->
+p_cat_blob({BlobID, Spec, Hosts}, IoDev, Extract) ->
     case edfs_slave:read(Hosts, BlobID) of
         {ok, Bytes} ->
-            io:put_chars(IoDev, Bytes);
+            Data = case Extract of
+                true -> erlduce_utils:decode(Spec, Bytes);
+                false -> Bytes
+            end,
+            if
+                is_binary(Data) -> io:put_chars(IoDev, Data);
+                true -> io:write(IoDev, Data)
+            end;
         {error, Reason} ->
             {error, {BlobID, Reason}}
     end.
@@ -69,15 +76,18 @@ unlink(Parent, Child) when is_binary(Parent), is_binary(Child) ->
     erlduce_utils:run_at_master(edfs_master, unlink, [Parent, {link,Child}]).
 
 
-write(Path, Bytes) ->
+write(Path, Data) ->
     {ok, EdfsEnv} = application:get_env(erlduce, edfs),
     Replicas = proplists:get_value(replicas, EdfsEnv, 3),
-    write(Path, Bytes, Replicas).
-write(Path, Bytes, local) ->
-    write(Path, Bytes, erlduce_utils:host(node()));
-write(Path, Bytes, ReplicasOrHost) when is_binary(Bytes) ->
-    Size = byte_size(Bytes),
-    case erlduce_utils:run_at_master(edfs_master, allocate, [Path,Size,ReplicasOrHost]) of
+    write(Path, Data, Replicas).
+write(Path, Data, local) ->
+    write(Path, Data, erlduce_utils:host(node()));
+write(Path, {Spec, Bytes}, ReplicasOrHost) ->
+    Size = if
+        is_binary(Bytes) -> byte_size(Bytes);
+        is_list(Bytes) -> iolist_size(Bytes)
+    end,
+    case erlduce_utils:run_at_master(edfs_master, allocate, [Path,Size,Spec,ReplicasOrHost]) of
         {ok, {BlobID, Hosts}} ->
             edfs_slave:write(Hosts, BlobID, Bytes);
         false ->

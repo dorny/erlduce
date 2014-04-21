@@ -4,7 +4,7 @@
 
 -export([
     start/0,
-    allocate/3,
+    allocate/4,
     blobs/1,
     check_available_space/1,
     cp/3,
@@ -83,20 +83,20 @@ p_init_slaves() ->
     ok.
 
 
-allocate(Path, Size, Host) when is_atom(Host)->
+allocate(Path, Size, Spec, Host) when is_atom(Host)->
     mnesia:activity(transaction, fun() ->
         case mnesia:wread({edfs_node, Host}) of
             [Slave=#edfs_node{space=Space}] when Space > Size+?MIN_AVAIL_SPACE ->
                 ok=mnesia:write(Slave#edfs_node{space=Space-Size}),
-                {ok, BlobID} = p_append_blob(Path, Size, 1),
+                {ok, BlobID} = p_append_blob(Path, Size, Spec, 1),
                 {ok, {BlobID, Host}};
             _ ->
                 false
         end
     end);
-allocate(Path, Size, Replicas) when is_integer(Replicas)->
-    p_allocate(Path, Size, Replicas, true).
-p_allocate(Path, Size,Replicas, Reset) ->
+allocate(Path, Size, Spec, Replicas) when is_integer(Replicas)->
+    p_allocate(Path, Size, Spec, Replicas, true).
+p_allocate(Path, Size, Spec, Replicas, Reset) ->
     Res = mnesia:activity(transaction, fun()->
         MatchSpec = [{#edfs_node{space='$1', used=false, _='_' }, [{'>', '$1', Size+?MIN_AVAIL_SPACE}],['$_']}],
         case mnesia:select(edfs_node, MatchSpec, Replicas, write) of
@@ -110,25 +110,27 @@ p_allocate(Path, Size,Replicas, Reset) ->
     end),
     case Res of
         {ok, Hosts} ->
-            {ok, BlobID} = p_append_blob(Path, Size, Replicas),
+            {ok, BlobID} = p_append_blob(Path, Size, Spec, Replicas),
             {ok, {BlobID, Hosts}};
         false when Reset=:=true ->
             p_mark_all_unused(),
-            p_allocate(Path, Size,Replicas, false);
+            p_allocate(Path, Size, Spec, Replicas, false);
         false ->
             false
     end.
-p_append_blob(Path, Size, Replicas) ->
-    case mnesia:wread({edfs_tag, Path}) of
-        [Tag] ->
-            Part = Tag#edfs_tag.blobs + 1,
-            BlobID = {Path, Part},
-            ok=mnesia:write(#edfs_blob{id=BlobID, size=Size, replicas=Replicas}),
-            ok=mnesia:write(Tag#edfs_tag{blobs=Part}),
-            {ok, BlobID};
-        [] ->
-            {error, not_found}
-    end.
+p_append_blob(Path, Size, Spec, Replicas) ->
+    mnesia:activity(transaction, fun()->
+        case mnesia:wread({edfs_tag, Path}) of
+            [Tag] ->
+                Part = Tag#edfs_tag.blobs + 1,
+                BlobID = {Path, Part},
+                ok=mnesia:write(#edfs_blob{id=BlobID, size=Size, spec=Spec, replicas=Replicas}),
+                ok=mnesia:write(Tag#edfs_tag{blobs=Part}),
+                {ok, BlobID};
+            [] ->
+                {error, not_found}
+        end
+    end).
 
 
 blobs(Path) ->
@@ -142,11 +144,11 @@ blobs(Path) ->
     end).
 p_blobs(BlobID) ->
     case mnesia:read({edfs_blob, BlobID}) of
-        [#edfs_blob{hosts=Hosts}] ->
-            {BlobID, Hosts};
+        [#edfs_blob{ spec=Spec, hosts=Hosts}] ->
+            {BlobID, Spec, Hosts};
         [] ->
             lager:error("Missing blob: ~p",[BlobID]),
-            {BlobID, []}
+            {BlobID, undefined, []}
     end.
 
 
@@ -172,10 +174,9 @@ check_available_space(Force) ->
 
 
 cp(Src, Dest, Opts) ->
-    case tag(Dest) of
-        ok -> p_cp(Src, Dest, Opts);
-        {error, already_exists} -> p_cp(Src, Dest, Opts);
-        Error -> Error
+    case mnesia:activity(ets, fun()-> mnesia:dirty_read(edfs_tag, Dest) end)  of
+        [] -> p_cp(Src, Dest, Opts);
+        [_] -> p_cp(Src, filename:join(Dest, filename:basename(Src)), Opts)
     end.
 p_cp(Src, Dest, Opts) ->
     case filelib:is_dir(Src) of
@@ -187,16 +188,23 @@ p_cp(Src, Dest, Opts) ->
             end
     end.
 p_cp_file(Src, Dest, Opts) ->
-    Path = filename:join([Dest, filename:basename(Src)]),
-    ok = tag(Path),
+    Replicas = proplists:get_value(replicas, Opts,3),
+    Compress = proplists:get_value(compress, Opts, none),
+    ok=tag(Dest),
+    edfs_lib:read_file(Src, Opts, fun
+        (eof)-> ok;
+        (Bytes) ->
+            Data = erlduce_utils:encode(binary, Bytes, Compress),
+            ok=edfs:write(Dest, Data, Replicas)
+    end).
 
-    ok.
+
 p_cp_dir(Src, Dest, Opts) ->
     case file:list_dir(Src) of
         {ok, Filenames} ->
             Path = filename:join([Dest, filename:basename(Src)]),
             ok = tag(Path),
-            [ cp(
+            [ p_cp(
                 filename:join([Src,Filename]),
                 filename:join([Path,Filename]),
                 Opts) || Filename <- Filenames
@@ -253,9 +261,9 @@ rm(Path, Recursive) ->
 p_rm(Path, Recursive, UnlinkParent) ->
     case mnesia:wread({edfs_tag, Path}) of
         [] ->
-            {error, not_found};
+            {error, {not_found,Path}};
         [#edfs_tag{children=Children}] when Children=/=[] andalso Recursive=:=false ->
-            {error, tag_has_children};
+            {error, {tag_has_children, Path}};
         [#edfs_tag{children=Children, blobs=Blobs}] ->
             [ p_delete_blob(BlobID) || BlobID <- edfs_lib:blobs(Path,Blobs) ],
             [ p_rm(Child, Recursive, false) || Child <- edfs_lib:children(Path,Children)],

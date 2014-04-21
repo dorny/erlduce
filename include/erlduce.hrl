@@ -10,6 +10,7 @@
 -record(edfs_blob, {
     id :: binary(),
     size :: number(),
+    spec :: data_spec(),
     replicas :: number(),
     hosts = []:: list(atom())
 }).
@@ -21,3 +22,10 @@
     blobs = 0 :: number(),
     children = []  :: list( binary()|{link, binary()} )
 }).
+
+
+
+
+-type compression() :: zip | snappy | none.
+-type data_type() :: binary | term.
+-type data_spec() :: data_type() | {compression(), data_type()}.

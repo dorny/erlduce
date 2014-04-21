@@ -34,20 +34,29 @@ cmd("help", _Args) ->
     usage();
 
 cmd("cat", Args) ->
-    OptSpecList = [{path, undefined, undefined, binary, "tag path"}],
-    {Opts, _} = erlduce_utils:getopts(OptSpecList, Args, [path], 0, 0, "tag","\nWrite Tag blobs to standard output"),
+    OptSpecList = [
+        {extract, $x, "extract", undefined, "extract stored term"},
+        {path, undefined, undefined, binary, "tag path"}
+    ],
+    {Opts, _} = erlduce_utils:getopts(OptSpecList, Args, [path], 0, 0, "cat","\nWrite Tag blobs to standard output"),
     Path = proplists:get_value(path, Opts),
-    erlduce_utils:resp( edfs:cat(Path,standard_io)),
+    Extract = lists:member(extract, Opts),
+    erlduce_utils:resp( edfs:cat(Path,standard_io,Extract)),
     halt();
 
 cmd("cp", Args) ->
     {ok, EdfsEnv} = application:get_env(erlduce, edfs),
+    DefaultBlockSize = erlduce_utils:parse_size(proplists:get_value(block_size, EdfsEnv, 32)),
     OptSpecList = [
-        {block_size, $b, "block-size", {integer, proplists:get_value(block_size, EdfsEnv, 32)}, "size of a one block"},
-        {type, $t, "type", {atom, text}, "file type, affects split method"},
-        {replica, $r, "replicas", {integer, proplists:get_value(replicas, EdfsEnv, 3)}}
+        {block_size, $b, "block-size", {string, DefaultBlockSize}, "size of a one block"},
+        % {encoding, $e, "encoding", {atom, utf8}, "file encodig"},
+        {compress, $c, "compress", {atom,none}, "use compression: none, zip, snappy"},
+        {replica, $r, "replicas", {integer, proplists:get_value(replicas, EdfsEnv, 3)}},
+        {type, $t, "type", {atom, text}, "file type, affects split method"}
     ],
-    {Opts, StrPaths} = erlduce_utils:getopts(OptSpecList, Args, [], 2, infinity, "cp", "[SOURCE ...] TAG\nCopy files into edfs storage"),
+    {Opts0, StrPaths} = erlduce_utils:getopts(OptSpecList, Args, [], 2, infinity, "cp", "[SOURCE ...] TAG\nCopy files into edfs storage"),
+    BlockSize = erlduce_utils:parse_size(proplists:get_value(block_size, Opts0)),
+    Opts = lists:keyreplace(block_size, 1, Opts0, {block_size, BlockSize}),
     Paths = [list_to_binary(P) || P <-StrPaths],
     {SrcPaths, [Dest]} = lists:split(length(Paths)-1, Paths),
     lists:foreach(fun(Src)->
@@ -106,7 +115,7 @@ cmd("rm", Args) ->
 
 cmd("stat", Args) ->
     OptSpecList = [{path, undefined, undefined, binary, "tag path"}],
-    {Opts, _} = erlduce_utils:getopts(OptSpecList, Args, [path], 0, 0, "tag","\nGet Tag stats"),
+    {Opts, _} = erlduce_utils:getopts(OptSpecList, Args, [path], 0, 0, "stat","\nGet Tag stats"),
     Path = proplists:get_value(path, Opts),
     {C,B,S,T} = erlduce_utils:resp( edfs:stat(Path)),
     io:format("children: ~p~n",[C]),

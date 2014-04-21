@@ -27,7 +27,10 @@
     code_load_modules/1,
 
     % compression
+    encode/1,
     encode/2,
+    encode/3,
+    decode/1,
     decode/2,
 
     % CLI
@@ -35,7 +38,8 @@
     getopts/7,
     die/1,
     die/2,
-    format_size/1
+    format_size/1,
+    parse_size/1
 ]).
 
 
@@ -193,25 +197,32 @@ code_load_modules(Modules) ->
 %%  Compression
 %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+encode(Term) ->
+    encode(Term, none).
+encode(Bytes, Compress) when is_binary(Bytes) ->
+    encode(binary, Bytes, Compress);
+encode(Term, Compress) ->
+    encode(term, term_to_binary(Term), Compress).
+encode(Format, Bytes, none) ->
+    {Format, Bytes};
+encode(Format, Bytes, zip) ->
+    {{zip,Format}, zlib:compress(Bytes)};
+encode(Format, Bytes, snappy) ->
+    {ok, Compressed} = snappy:compress(Bytes),
+    {{snappy, Format}, Compressed}.
 
-encode(Format, Data) ->
-    case Format of
-        term   -> {term, Data};
-        binary -> {binary, erlang:term_to_binary(Data)};
-        zip    -> {zip, erlang:term_to_binary(Data,compress)};
-        snappy ->
-            {ok, Bin} = snappy:compress(erlang:term_to_binary(Data)),
-            {snappy, Bin}
-    end.
 
-
-decode(Format, Data) ->
-    case Format of
-        term   -> {ok, Data};
-        binary -> {ok, erlang:binary_to_term(Data)};
-        zip    -> {ok, erlang:binary_to_term(Data)};
-        snappy -> {ok, _Term} = snappy:decompress(Data)
-    end.
+decode({Spec, Data}) ->
+    decode(Spec, Data).
+decode(binary, Bytes) ->
+    Bytes;
+decode(term, Bytes) ->
+    binary_to_term(Bytes);
+decode({zip, Format}, Bytes) ->
+    decode(Format, zlib:uncompress(Bytes));
+decode({snappy, Format}, Data) ->
+    {ok, Bytes} = snappy:decompress(Data),
+    decode(Format,Bytes).
 
 
 
@@ -224,11 +235,12 @@ decode(Format, Data) ->
 
 resp(Resp) ->
     case Resp of
-        {badrpc, Reason} -> die(Reason);
-        {error, Reason} -> die(Reason);
+        {badrpc, Reason} -> io:fwrite(standard_error, "error: ~p~n", [Reason]);
+        {error, Reason} -> io:fwrite(standard_error, "error: ~p~n", [Reason]);
         {warn, Msg} -> io:fwrite(standard_error, "warning: ~p~n", [Msg]), Resp;
         {info, Msg} -> io:format("info: ~p~n",[Msg]);
         {ok, Value} -> Value;
+        List when is_list(List) -> [ resp(Val) || Val <- List];
         _ -> Resp
     end.
 
@@ -276,8 +288,6 @@ format_size(S) when S >= 1024 -> p_format_size(S, 1024, "KB");
 format_size(S) -> integer_to_list(S)++" B".
 
 p_format_size(S, U, Unit) ->
-    % F = round((S*10)/U)/10,
-    % float_to_list(F)++" "++Unit.
     MB = S/U, N = trunc(MB), D = round((MB-N)*10),
     if
         D>=10 -> integer_to_list(N+1)++" "++Unit;
@@ -285,3 +295,14 @@ p_format_size(S, U, Unit) ->
         true -> integer_to_list(N)++" "++Unit
     end.
 
+
+parse_size(S) when is_integer(S) -> S;
+parse_size(S) when is_list(S) ->
+    {N, Rest} = string:to_integer(S),
+    case string:strip(Rest, both) of
+        "" -> N;
+        "B" -> N;
+        "KB" -> N*1024;
+        "MB" -> N*1024*1024;
+        "GB" ->N*1024*1024*1024
+    end.

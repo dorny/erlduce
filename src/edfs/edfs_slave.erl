@@ -50,7 +50,7 @@ write(Host, BlobID, Bytes) when is_atom(Host) ->
         RemoteHost -> gen_server:call({?MODULE, ?Node(RemoteHost)}, {write, BlobID, Bytes})
     end;
 write(Hosts, BlobID, Bytes) when is_list(Hosts) ->
-    Resps = edfs_utils:pmap(fun(Host)-> write(Host,BlobID,Bytes) end, Hosts),
+    Resps = erlduce_utils:pmap(fun(Host)-> write(Host,BlobID,Bytes) end, Hosts),
     case lists:member(ok, Resps) of
         true -> ok;
         false -> {error, Resps}
