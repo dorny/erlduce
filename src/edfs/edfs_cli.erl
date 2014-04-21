@@ -16,12 +16,13 @@ usage() ->
     io:fwrite(standard_error, lists:concat([
         "Usage: edfs <command> [options ...] [args ...]~n~n",
         "Commands are:~n",
-        "  clear~n",
         "  cp~n",
+        "  link~n",
         "  ls~n",
         "  rm~n",
         "  stat~n",
         "  tag~n",
+        "  unlink~n",
         "  help~n",
         "~n"
     ]), []),
@@ -31,9 +32,6 @@ usage() ->
 cmd("help", _Args) ->
     usage();
 
-cmd("clear", _Args) ->
-    erlduce_utils:resp(edfs:clear()),
-    halt();
 
 cmd("cp", Args) ->
     {ok, EdfsEnv} = application:get_env(erlduce, edfs),
@@ -66,8 +64,16 @@ cmd("format", _Args) ->
     [ os:cmd("ssh '"++atom_to_list(Host)++"' \"rm '"++BlobsDir++"'/*\"")  || {Host, _} <- Nodes],
     halt();
 
-% cmd("link", Args) ->
-    % todo;
+cmd("link", Args) ->
+    OptSpecList = [
+        {parent, undefined, undefined, binary, "tag path"},
+        {child, undefined, undefined, binary, "tag path"}
+    ],
+    {Opts, _} = erlduce_utils:getopts(OptSpecList, Args, [], 0, 0, "link", "\nCreate symbolic link"),
+    Parent = proplists:get_value(parent, Opts),
+    Child = proplists:get_value(child, Opts),
+    erlduce_utils:resp( edfs:link(Parent,Child)),
+    halt();
 
 cmd("ls", Args) ->
     OptSpecList = [{list, $l, undefined, undefined, "use a long listing format"}],
@@ -102,6 +108,17 @@ cmd("tag", Args) ->
     erlduce_utils:resp( edfs:tag(Path)),
     halt();
 
+cmd("unlink", Args) ->
+    OptSpecList = [
+        {parent, undefined, undefined, binary, "tag path"},
+        {child, undefined, undefined, binary, "tag path"}
+    ],
+    {Opts, _} = erlduce_utils:getopts(OptSpecList, Args, [], 0, 0, "unlink", "\nRemove symbolic link"),
+    Parent = proplists:get_value(parent, Opts),
+    Child = proplists:get_value(child, Opts),
+    erlduce_utils:resp( edfs:unlink(Parent,Child)),
+    halt();
+
 cmd(Cmd, _Args) ->
     io:fwrite(standard_error, "Unknown command: ~s~n", [Cmd]),
     usage().
@@ -122,7 +139,10 @@ p_print_ls(Listing, Long) ->
         false -> " "
     end,
     Sorted = lists:sort(Listing),
-    lists:foreach(fun(TagName)-> io:format("~s~s",[TagName, Join]) end, Sorted),
+    lists:foreach(fun
+        ({link, TagName}) -> io:format("{link, \"~s\"}~s",[TagName, Join]);
+        (TagName)-> io:format("~s~s",[TagName, Join])
+    end, Sorted),
     case Long of
         false -> io:format("~n");
         true -> ok

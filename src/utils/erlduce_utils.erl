@@ -123,14 +123,13 @@ start_slaves(Name, Hosts) ->
     end, Hosts),
 
     Slaves = lists:filtermap(fun
-        ({Host, {error,_}}) -> false;
+        ({_Host, {error,_}}) -> false;
         ({Host, {ok, Node}}) -> {true, {Host, Node}}
     end, TrySlaves),
     Slaves.
 
 start_slave(Name, Host, LinkTo) ->
     {ok, Master} = application:get_env(erlduce, master),
-    Cookie = erlang:get_cookie(),
     Paths = lists:foldr(fun(P, Acc)-> lists:concat([Acc," \"",filename:absname(P),"\""]) end, "", code:get_path()),
 
     Res = slave:start(Host, Name, lists:concat([
@@ -210,7 +209,7 @@ decode(Format, Data) ->
         term   -> {ok, Data};
         binary -> {ok, erlang:binary_to_term(Data)};
         zip    -> {ok, erlang:binary_to_term(Data)};
-        snappy -> {ok, Term} = snappy:decompress(Data)
+        snappy -> {ok, _Term} = snappy:decompress(Data)
     end.
 
 

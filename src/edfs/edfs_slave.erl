@@ -35,11 +35,12 @@ start_link() ->
 
 
 write(Host, BlobID, Bytes) when is_atom(Host) ->
-    gen_server:call({?MODULE, ?Node(Host)}, {write, BlobID, Bytes});
-
+    case erlduce_utils:host() of
+        Host -> p_write(BlobID, Bytes, Host);
+        RemoteHost -> gen_server:call({?MODULE, ?Node(RemoteHost)}, {write, BlobID, Bytes})
+    end;
 write(Hosts, BlobID, Bytes) when is_list(Hosts) ->
-    Nodes = [?Node(Host) || Host <- Hosts],
-    Resps = gen_server:multi_call(Nodes, ?MODULE, {write, BlobID, Bytes}),
+    Resps = edfs_utils:pmap(fun(Host)-> write(Host,BlobID,Bytes) end, Hosts),
     case lists:member(ok, Resps) of
         true -> ok;
         false -> {error, Resps}
@@ -59,42 +60,60 @@ delete(Host, BlobID) ->
 init(_Args) ->
     {ok, WorkDir} = application:get_env(erlduce, work_dir),
     {ok, #state{
-        master = application:get_env(erlduce, master),
         host = erlduce_utils:host(),
         blobs = filename:join(WorkDir, "blobs")
     }}.
 
-handle_call( {write, BlobID, Bytes}, From, State=#state{master=Master, host=Host, blobs=BlobsDir}) ->
-    Filename = filename:join(BlobsDir, BlobID),
-    case file:write_file(Filename, Bytes,[raw]) of
-        ok  ->
-            edfs:register_blob(BlobID,Host),
-            {reply, ok, State};
-        Err ->
-            lager:error("Failed to write file ~p: ~p...",[Filename, Err]),
-            {reply, Err, State}
-    end;
 
-handle_call( Request, From, State) ->
+handle_call( {write, BlobID, Bytes}, _From, State=#state{blobs=BlobsDir, host=Host}) ->
+    {reply , p_write(BlobID, Bytes, Host, BlobsDir), State};
+
+handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
 
 
 handle_cast( {delete, BlobID}, State=#state{blobs=BlobsDir}) ->
     Filename = filename:join(BlobsDir, BlobID),
-    file:delete(Filename),
+    % use internal prim_file
+    % it's the only way to delete a file on local filesystem, rather then on master's
+    prim_file:delete(Filename),
     {noreply, State};
 
-handle_cast( Msg, State) ->
+handle_cast( _Msg, State) ->
     {noreply, State}.
 
 
-handle_info( Info, State) ->
+handle_info( _Info, State) ->
     {noreply, State}.
 
 
-terminate(Reason,_State) ->
+terminate( _Reason,_State) ->
     ok.
 
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%%  PRIVATE
+%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+p_write(BlobID, Bytes, Host) ->
+    {ok, WorkDir} = application:get_env(erlduce, work_dir),
+    BlobsDir = filename:join(WorkDir, "blobs"),
+    p_write(BlobID, Bytes, Host, BlobsDir).
+
+
+p_write(BlobID, Bytes, Host, BlobsDir) ->
+    Filename = filename:join(BlobsDir, BlobID),
+    case file:write_file(Filename, Bytes,[raw]) of
+        ok  ->
+            edfs:register_blob(BlobID,Host),
+            ok;
+        Err ->
+            lager:error("Failed to write file ~p: ~p...",[Filename, Err]),
+            {error, Err}
+    end.

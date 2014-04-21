@@ -4,11 +4,10 @@
 
 -export([
     start/0,
-    allocate/2,
+    allocate/3,
     % cat
     check_available_space/1,
     cp/3,
-    delete_blob/1,
     link/2,
     ls/1,
     register_blob/2,
@@ -71,7 +70,7 @@ p_init_slaves() ->
 
     Slaves = erlduce_utils:start_slaves(edfs,Hosts),
     erlduce_utils:pmap(fun({_,Node})->
-        {ok,Pid} = rpc:call(Node, edfs_sup, start_link, [])
+        {ok, _Pid} = rpc:call(Node, edfs_sup, start_link, [])
     end,Slaves),
 
     EDFSNodes = [ #edfs_node{host=Host} || {Host,_} <- Slaves],
@@ -84,20 +83,20 @@ p_init_slaves() ->
     ok.
 
 
-allocate(Size, Host) when is_atom(Host)->
+allocate(Path, Size, Host) when is_atom(Host)->
     mnesia:activity(transaction, fun() ->
         case mnesia:wread({edfs_node, Host}) of
             [Slave=#edfs_node{space=Space}] when Space > Size+?MIN_AVAIL_SPACE ->
                 ok=mnesia:write(Slave#edfs_node{space=Space-Size}),
-                {ok, BlobID} = blob(Size, 1),
+                {ok, BlobID} = p_append_blob(Path, Size, 1),
                 {ok, {BlobID, Host}};
             _ ->
                 false
         end
     end);
-allocate(Size, Replicas) when is_integer(Replicas)->
-    p_allocate(Size, Replicas, true).
-p_allocate(Size,Replicas, Reset) ->
+allocate(Path, Size, Replicas) when is_integer(Replicas)->
+    p_allocate(Path, Size, Replicas, true).
+p_allocate(Path, Size,Replicas, Reset) ->
     Res = mnesia:activity(transaction, fun()->
         MatchSpec = [{#edfs_node{space='$1', used=false, _='_' }, [{'>', '$1', Size+?MIN_AVAIL_SPACE}],['$_']}],
         case mnesia:select(edfs_node, MatchSpec, Replicas, write) of
@@ -105,36 +104,30 @@ p_allocate(Size,Replicas, Reset) ->
                 false;
             {Slaves, _} ->
                 [ok=mnesia:write(Slave#edfs_node{space=Space-Size, used=true}) || Slave=#edfs_node{space=Space} <- Slaves],
-                Hosts = [Host || Slave=#edfs_node{host=Host} <- Slaves],
+                Hosts = [Host || #edfs_node{host=Host} <- Slaves],
                 {ok, Hosts}
         end
     end),
     case Res of
         {ok, Hosts} ->
-            {ok, BlobID} = blob(Size, Replicas),
+            {ok, BlobID} = p_append_blob(Path, Size, Replicas),
             {ok, {BlobID, Hosts}};
         false when Reset=:=true ->
             p_mark_all_unused(),
-            p_allocate(Size,Replicas, false);
+            p_allocate(Path, Size,Replicas, false);
         false ->
             false
     end.
-
-
-blob(Size, Replicas) ->
-    BlobID = edfs_lib:generate_id(),
-    Res = mnesia:activity(transaction, fun()->
-        case mnesia:wread({edfs_blob, BlobID})  of
-            [] ->
-                ok=mnesia:write(#edfs_blob{id=BlobID, size=Size, replicas=Replicas}),
-                {ok, BlobID};
-        _ ->
-            false
-        end
-    end),
-    case Res of
-        false -> blob(Size, Replicas);
-        _ -> Res
+p_append_blob(Path, Size, Replicas) ->
+    case mnesia:wread({edfs_tag, Path}) of
+        [Tag] ->
+            Ord = Tag#edfs_tag.blobs + 1,
+            BlobID = edfs_lib:blob_id(Path, Ord),
+            ok=mnesia:write(#edfs_blob{id=BlobID, size=Size, replicas=Replicas}),
+            ok=mnesia:write(Tag#edfs_tag{blobs=Ord}),
+            {ok, BlobID};
+        [] ->
+            {error, not_found}
     end.
 
 
@@ -194,30 +187,19 @@ p_cp_dir(Src, Dest, Opts) ->
     end.
 
 
-delete_blob(BlobID) ->
-    mnesia:activity(transaction, fun()->
-        case mnesia:wread({edfs_blob, BlobID}) of
-            [#edfs_blob{hosts=Hosts}] ->
-                [ edfs_slave:delete(Host, BlobID) || Host <- Hosts],
-                ok=mnesia:delete({edfs_blob, BlobID});
-            [] ->
-                {error, not_found}
-        end
-    end).
-
-
 link(Parent, Child) ->
     mnesia:activity(transaction, fun() ->
         case mnesia:wread({edfs_tag, Parent}) of
             [ ParentTag ] ->
                 Children = ParentTag#edfs_tag.children,
-                ok=mnesia:write(ParentTag#edfs_tag{ children=[Child|Children]});
+                case lists:member(Child, Children) of
+                    false -> ok=mnesia:write(ParentTag#edfs_tag{ children=[ Child | Children]});
+                    true -> {error, already_exists}
+                end;
             [] ->
                 {error, parent_not_found}
         end
     end).
-
-
 
 
 ls(Path) ->
@@ -254,14 +236,29 @@ p_rm(Path, Recursive, UnlinkParent) ->
         [#edfs_tag{children=Children}] when Children=/=[] andalso Recursive=:=false ->
             {error, tag_has_children};
         [#edfs_tag{children=Children, blobs=Blobs}] ->
-            [ delete_blob(BlobID) || BlobID <- Blobs],
-            [ p_rm(Child, Recursive, false) || Child <- Children],
+            [ p_delete_blob(edfs_lib:blob_id(Path, BlobOrd)) || BlobOrd <- lists:seq(1, Blobs) ],
+            p_rm_children(Path, Children, Recursive),
             mnesia:delete({edfs_tag, Path}),
             case UnlinkParent of
                 true -> unlink( edfs_lib:parent_path(Path), Path);
                 false -> ok
             end
     end.
+p_rm_children(Path, Children, Recursive) ->
+    lists:foreach(fun
+        ({link, Link}) -> p_rm(Link, Recursive, false);
+        (Child) -> p_rm( filename:join(Path, Child), Recursive, false)
+    end, Children).
+p_delete_blob(BlobID) ->
+    mnesia:activity(transaction, fun()->
+        case mnesia:wread({edfs_blob, BlobID}) of
+            [#edfs_blob{hosts=Hosts}] ->
+                [ edfs_slave:delete(Host, BlobID) || Host <- Hosts],
+                ok=mnesia:delete({edfs_blob, BlobID});
+            [] ->
+                {error, not_found}
+        end
+    end).
 
 
 tag(Path) ->
@@ -271,7 +268,7 @@ tag(Path) ->
             [] ->
                 ok = mnesia:write(#edfs_tag{path=Path}),
                 Parent = edfs_lib:parent_path(Path),
-                case link(Parent, Path) of
+                case link(Parent, filename:basename(Path)) of
                     {error, Reason} -> mnesia:abort(Reason);
                     ok -> ok
                 end
@@ -289,10 +286,6 @@ unlink(Parent, Child) ->
                 {error, not_found}
         end
     end).
-
-
-
-
 
 
 

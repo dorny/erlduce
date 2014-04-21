@@ -18,6 +18,6 @@
 % MNESIA
 -record(edfs_tag, {
     path :: binary(),
-    blobs = [] :: list(binary()),
-    children = []  :: list(binary())
+    blobs = 0 :: number(),
+    children = []  :: list( binary()|{link, binary()} )
 }).

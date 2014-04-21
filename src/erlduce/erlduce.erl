@@ -19,7 +19,7 @@ start() ->
 start(_StartType, _StartArgs) ->
     application:set_env(erlduce, master, node()),
     edfs:start(),
-    {ok, Pid} = erlduce_sup:start_link().
+    {ok, _Pid} = erlduce_sup:start_link().
 
 
 stop() ->

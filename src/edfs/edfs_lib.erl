@@ -3,20 +3,24 @@
 -author("Michal Dorner <dorner.michal@gmail.com>").
 
 -export([
-    generate_id/0,
+    blob_id/2,
     get_available_space/1,
     parent_path/1
 ]).
 
+-define( BLOB_ORD_LEN, 7).
 
 
-generate_id() ->
-    H1 = integer_to_binary(erlang:phash2(now())),
-    H2 = integer_to_binary(erlang:phash2(make_ref())),
-    H3 = integer_to_binary(erlang:phash2(make_ref())),
-    S = <<"-">>,
-    HashList = [H1, S, H2, S, H3],
-    iolist_to_binary(HashList).
+blob_id(Path, Ord) ->
+    OrdStr = if
+        Ord >= ?BLOB_ORD_LEN ->
+            integer_to_list(Ord);
+        true ->
+            L = integer_to_list(Ord),
+            string:right(L, ?BLOB_ORD_LEN - length(L), $0)
+    end,
+    BlobIdParts = [ binary:replace(Path, <<"/">>, <<"-">>, [global]), <<"-">>, list_to_binary(OrdStr) ],
+    erlang:iolist_to_binary(BlobIdParts).
 
 
 get_available_space(Host) ->
