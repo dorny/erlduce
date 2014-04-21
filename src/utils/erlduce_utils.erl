@@ -123,15 +123,11 @@ pmap(F, L) ->
 
 start_slaves(Name, Hosts) ->
     Master = self(),
-    TrySlaves = erlduce_utils:pmap(fun(Host)->
+    Slaves = erlduce_utils:pmap(fun(Host)->
         {Host, start_slave(Name,Host,Master)}
     end, Hosts),
+    [{Host, Node} ||  {Host, {Status, Node}} <- Slaves, Status=:=ok].
 
-    Slaves = lists:filtermap(fun
-        ({_Host, {error,_}}) -> false;
-        ({Host, {ok, Node}}) -> {true, {Host, Node}}
-    end, TrySlaves),
-    Slaves.
 
 start_slave(Name, Host, LinkTo) ->
     {ok, Master} = application:get_env(erlduce, master),
