@@ -36,16 +36,17 @@ else
         io:format(\"~s\",[proplists:get_value(work_dir,Opts)]),
         halt().
     "`
+
     DIRS=""
     for DIR in "blobs" "jobs" "mnesia"; do
-        DIRS="$DIRS '$WORK_DIR/$DIR'"
+        DIRS="$DIRS $WORK_DIR/$DIR"
     done
     mkdir -p $DIRS
 
     for HOST in $HOSTS; do
         if [ "$HOST" != "$HOSTNAME" ]; then
             scp "$TEMP" "$HOST:$TEMP"
-            ssh $HOST "mkdir -p $DIRS; tar -xzf $TEMP -C $PARENT -m"
+            ssh $HOST "mkdir -p $DIRS; tar -xzf '$TEMP' -C '$PARENT' -m"
         fi
     done
 fi
