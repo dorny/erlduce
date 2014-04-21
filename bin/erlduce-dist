@@ -19,11 +19,24 @@ HOSTS=`erl -noshell -eval "
     halt().
 "`
 
-tar -czf "$TEMP" -C "$PARENT" "$DIRNAME"
+if [ $# -gt 0 ]; then
+    for FN in $@; do
+        P=`readlink -m "$FN"`
+        for HOST in $HOSTS; do
+            if [ "$HOST" != "$HOSTNAME" ]; then
+                scp "$P" "$HOST:$P"
+            fi
+        done
+    done
+else
+    tar -czf "$TEMP" -C "$PARENT" "$DIRNAME"
 
-for HOST in $HOSTS; do
-    if [ "$HOST" != "$HOSTNAME" ]; then
-        scp "$TEMP" "$HOST:$TEMP"
-        ssh $HOST "tar -xzf $TEMP -C $PARENT"
-    fi
-done
+    for HOST in $HOSTS; do
+        if [ "$HOST" != "$HOSTNAME" ]; then
+            scp "$TEMP" "$HOST:$TEMP"
+            ssh $HOST "tar -xzf $TEMP -C $PARENT"
+        fi
+    done
+fi
+
+
