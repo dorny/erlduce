@@ -45,7 +45,7 @@ else
     for HOST in $HOSTS; do
         if [ "$HOST" != "$HOSTNAME" ]; then
             scp "$TEMP" "$HOST:$TEMP"
-            ssh $HOST "mkdir -p $DIRS; tar -xzf $TEMP -C $PARENT"
+            ssh $HOST "mkdir -p $DIRS; tar -xzf $TEMP -C $PARENT -m"
         fi
     done
 fi
