@@ -102,12 +102,13 @@ p_allocate(Path, Size, Spec, Replicas, Reset) ->
     Res = mnesia:activity(transaction, fun()->
         MatchSpec = [{#edfs_node{space='$1', used=false, _='_' }, [{'>', '$1', Size+?MIN_AVAIL_SPACE}],['$_']}],
         case mnesia:select(edfs_node, MatchSpec, Replicas, write) of
-            '$end_of_table' ->
-                false;
-            {Slaves, _} ->
-                [ok=mnesia:write(Slave#edfs_node{space=Space-Size, used=true}) || Slave=#edfs_node{space=Space} <- Slaves],
-                Hosts = [Host || #edfs_node{host=Host} <- Slaves],
-                {ok, Hosts}
+            {Slaves, _} when (length(Slaves)>=Replicas) orelse Reset=:=false ->
+                {MySlaves,_} = lists:split(Replicas, Slaves),
+                [ok=mnesia:write(Slave#edfs_node{space=Space-Size, used=true}) || Slave=#edfs_node{space=Space} <- MySlaves],
+                Hosts = [Host || #edfs_node{host=Host} <- MySlaves],
+                {ok, Hosts};
+            _ ->
+                false
         end
     end),
     case Res of
@@ -264,7 +265,7 @@ register_blob(BlobID, Host) ->
     end).
 
 
-rm(Path= <<"/">>, _) ->
+rm(<<"/">>, _) ->
     {error, cannot_remove_root};
 rm(Path, Recursive) ->
     mnesia:activity(transaction, fun p_rm/3, [Path, Recursive, true]).
