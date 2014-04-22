@@ -103,12 +103,7 @@ p_allocate(Path, Size, Spec, Replicas, Reset) ->
         MatchSpec = [{#edfs_node{space='$1', used=false, _='_' }, [{'>', '$1', Size+?MIN_AVAIL_SPACE}],['$_']}],
         case mnesia:select(edfs_node, MatchSpec, Replicas, write) of
             {Slaves, _} when (length(Slaves)>=Replicas) orelse Reset=:=false ->
-                {MySlaves,_} = if
-                    length(Slaves)>Replicas ->
-                        lists:split(Replicas, Slaves);
-                    true ->
-                        {Slaves,ok}
-                end,
+                MySlaves = lists:sublist(Slaves, Replicas),
                 [ok=mnesia:write(Slave#edfs_node{space=Space-Size, used=true}) || Slave=#edfs_node{space=Space} <- MySlaves],
                 Hosts = [Host || #edfs_node{host=Host} <- MySlaves],
                 {ok, Hosts};
@@ -212,17 +207,14 @@ p_cp_file(Src, Dest, Opts) ->
         {error, Reason} ->
             ?SRC_DEST_ERR
     end.
-
-
 p_cp_dir(Src, Dest, Opts) ->
     case file:list_dir(Src) of
         {ok, Filenames} ->
-            Path = filename:join([Dest, filename:basename(Src)]),
-            case tag(Path) of
+            case tag(Dest) of
                 ok ->
                     [ p_cp(
                         filename:join([Src,Filename]),
-                        filename:join([Path,Filename]),
+                        filename:join([Dest,Filename]),
                         Opts) || Filename <- Filenames
                     ];
                 {error, Reason} ->
