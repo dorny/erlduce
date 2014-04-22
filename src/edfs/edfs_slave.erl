@@ -47,7 +47,7 @@ read([Host| Hosts], BlobID) ->
 write(Host, BlobID, Bytes) when is_atom(Host) ->
     case erlduce_utils:host() of
         Host -> p_write(BlobID, Bytes, Host);
-        _ -> gen_server:call({?MODULE, ?Node(Host)}, {write, BlobID, Bytes})
+        _ -> gen_server:call({?MODULE, ?Node(Host)}, {write, BlobID, Bytes, Host})
     end;
 write(Hosts, BlobID, Bytes) when is_list(Hosts) ->
     Resps = erlduce_utils:pmap(fun(Host)-> write(Host,BlobID,Bytes) end, Hosts),
@@ -77,7 +77,8 @@ handle_call( {read, BlobID}, _From, State) ->
 handle_call( {write, BlobID, Bytes, Host}, _From, State) ->
     {reply , p_write(BlobID, Bytes, Host), State};
 
-handle_call( _Request, _From, State) ->
+handle_call( Request, From, State) ->
+    lager:warning("ignored call: ~p from ~p",[Request,From]),
     {reply, ignored, State}.
 
 
@@ -88,11 +89,13 @@ handle_cast( {delete, BlobID}, State) ->
     prim_file:delete(Filename),
     {noreply, State};
 
-handle_cast( _Msg, State) ->
+handle_cast( Msg, State) ->
+    lager:warning("ignored cast: ~p",[Msg]),
     {noreply, State}.
 
 
-handle_info( _Info, State) ->
+handle_info( Info, State) ->
+    lager:warning("ignored info: ~p",[Info]),
     {noreply, State}.
 
 
