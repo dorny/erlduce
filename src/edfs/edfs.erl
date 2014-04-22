@@ -35,10 +35,7 @@ p_cat_blob({BlobID, Spec, Hosts}, IoDev, Extract) ->
                 true -> erlduce_utils:decode(Spec, Bytes);
                 false -> Bytes
             end,
-            if
-                is_binary(Data) -> io:put_chars(IoDev, Data);
-                true -> io:write(IoDev, Data)
-            end;
+            file:write(IoDev, Data);
         {error, Reason} ->
             {error, {BlobID, Reason}}
     end.
