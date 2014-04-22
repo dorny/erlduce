@@ -103,7 +103,12 @@ p_allocate(Path, Size, Spec, Replicas, Reset) ->
         MatchSpec = [{#edfs_node{space='$1', used=false, _='_' }, [{'>', '$1', Size+?MIN_AVAIL_SPACE}],['$_']}],
         case mnesia:select(edfs_node, MatchSpec, Replicas, write) of
             {Slaves, _} when (length(Slaves)>=Replicas) orelse Reset=:=false ->
-                {MySlaves,_} = lists:split(Replicas, Slaves),
+                {MySlaves,_} = if
+                    length(Slaves)>Replicas ->
+                        lists:split(Replicas, Slaves);
+                    true ->
+                        {Slaves,ok}
+                end,
                 [ok=mnesia:write(Slave#edfs_node{space=Space-Size, used=true}) || Slave=#edfs_node{space=Space} <- MySlaves],
                 Hosts = [Host || #edfs_node{host=Host} <- MySlaves],
                 {ok, Hosts};
