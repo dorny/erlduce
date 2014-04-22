@@ -43,7 +43,7 @@ parent_path(Path) ->
         1 ->
             <<"/">>;
         _ ->
-            ParentParts = lists:droplast(PathParts),
+            ParentParts = lists:sublist(PathParts, length(PathParts) -1),
             filename:join(ParentParts)
     end.
 
