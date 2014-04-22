@@ -33,11 +33,11 @@ start_link() ->
 read(Host, BlobID) when is_atom(Host) ->
     case erlduce_utils:host() of
         Host -> p_read(BlobID);
-        RemoteHost -> gen_server:call({?MODULE, ?Node(RemoteHost)}, {read, BlobID})
+        _ -> gen_server:call({?MODULE, ?Node(Host)}, {read, BlobID})
     end;
 read([], BlobID) ->
     {error, {no_hosts,BlobID}};
-read([Host| Hosts], BlobID) when is_list(Hosts) ->
+read([Host| Hosts], BlobID) ->
     case read(Host, BlobID) of
         RespOk={ok,_} -> RespOk;
         _Err -> read(Hosts, BlobID)
@@ -47,7 +47,7 @@ read([Host| Hosts], BlobID) when is_list(Hosts) ->
 write(Host, BlobID, Bytes) when is_atom(Host) ->
     case erlduce_utils:host() of
         Host -> p_write(BlobID, Bytes, Host);
-        RemoteHost -> gen_server:call({?MODULE, ?Node(RemoteHost)}, {write, BlobID, Bytes})
+        _ -> gen_server:call({?MODULE, ?Node(Host)}, {write, BlobID, Bytes})
     end;
 write(Hosts, BlobID, Bytes) when is_list(Hosts) ->
     Resps = erlduce_utils:pmap(fun(Host)-> write(Host,BlobID,Bytes) end, Hosts),
