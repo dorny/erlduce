@@ -68,10 +68,13 @@ read_file(Filename, Opts, Fun) ->
     Modes = [read, read_ahead, raw, binary],
     case file:open(Filename, Modes) of
         {ok, IoDev} ->
-            split(IoDev, FileType, BlockSize, Fun);
+            Res = split(IoDev, FileType, BlockSize, Fun),
+            file:close(IoDev),
+            Res;
         {error, Reason} ->
             {error, {file_open, Reason}}
     end.
+
 
 split(IoDev, FileType, BlockSize, Fun) ->
     case read_part(FileType, IoDev, BlockSize) of
