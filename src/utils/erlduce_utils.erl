@@ -111,7 +111,7 @@ run_at_master(M,F,A) ->
 
 pmap(F, L) ->
     Parent = self(),
-    [receive {Pid, Result} -> Result end || Pid <- [spawn(fun() -> Parent ! {self(), F(X)} end) || X <- L]].
+    [ receive {Pid, Result} -> Result end || Pid <- [spawn(fun() -> link(Parent), Parent ! {self(), F(X)} end) || X <- L]].
 
 
 
