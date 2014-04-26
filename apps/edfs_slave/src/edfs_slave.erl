@@ -63,11 +63,8 @@ read(_BlobID,[],Errors) ->
     {error, Errors}.
 p_read(BlobID, Host) when is_atom(Host) ->
     case gen_server:call(?NAME(Host), {read, BlobID}) of
-        {ok, {file, Filename, Sem}} ->
-            erlduce_utils:sem_wait(Sem),
-            Result = prim_file:read_file(Filename),
-            erlduce_utils:sem_signal(Sem),
-            Result;
+        {ok, {file, Filename}} ->
+            prim_file:read_file(Filename);
         {ok, {pid, Pid}} ->
             receive
                 {Pid, Resp} -> Resp
@@ -86,8 +83,8 @@ write({BlobID,Hosts}, Bytes) ->
     end.
 p_write(BlobID, Bytes, Host) ->
     case gen_server:call(?NAME(Host), {write, BlobID}) of
-        {ok, {file, Filename, Sem}} ->
-            p_write_file_local(BlobID, Filename, Bytes, Host, Sem);
+        {ok, {file, Filename}} ->
+            p_write_file_local(BlobID, Filename, Bytes, Host);
         {ok, {pid, Pid}} ->
             Pid ! {self(), Bytes},
             receive
@@ -142,7 +139,7 @@ handle_call( {read, BlobID}, {Pid, _}, State=#state{ read_sem=Sem, host=Host, wo
     Filename = blob_filename(BlobID, WorkDir),
     case erlduce_utils:host(node(Pid)) of
         Host ->
-            {reply , {ok, {file, Filename, Sem}}, State};
+            {reply , {ok, {file, Filename}}, State};
         _ ->
             Worker = spawn(fun()->
                 link(Pid),
@@ -158,7 +155,7 @@ handle_call( {write, BlobID}, {Pid, _}, State=#state{ write_sem=Sem, host=Host, 
     Filename = blob_filename(BlobID, WorkDir),
     case erlduce_utils:host(node(Pid)) of
         Host ->
-            {reply , {ok, {file, Filename, Sem}}, State};
+            {reply , {ok, {file, Filename}}, State};
         _ ->
             Worker = spawn(?MODULE,p_write_task,[BlobID, Filename, Pid, Host, Sem]),
             {reply , {ok, {pid, Worker}}, State}
@@ -249,12 +246,8 @@ p_write_task(BlobID, Filename, Pid, Host, Sem) ->
             end
     end.
 
-p_write_file_local(BlobID, Filename, Bytes, Host, Sem) ->
-    erlduce_utils:sem_wait(Sem),
-    Result = prim_file:write_file(Filename, Bytes),
-    Result = ok,
-    erlduce_utils:sem_signal(Sem),
-    case Result of
+p_write_file_local(BlobID, Filename, Bytes, Host) ->
+    case prim_file:write_file(Filename, Bytes) of
         ok ->
             case edfs_master:register_blob(BlobID, Host) of
                 ok -> ok;
