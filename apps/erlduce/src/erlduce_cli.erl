@@ -14,7 +14,7 @@
 cmd() ->
     application:load(erlduce),
     Args = init:get_plain_arguments(),
-    Resp = case Args of
+    case Args of
         ["fs" | TArgs] -> edfs_cli:cmd(TArgs);
         [StrCmd | TArgs] ->
             Cmd = list_to_atom("cmd_"++StrCmd),
@@ -26,11 +26,7 @@ cmd() ->
             end;
         [] -> cmd_help(Args)
     end,
-    Status = case erlduce_utils:resp(Resp) of
-        ok -> 0;
-        error -> 1
-    end,
-    halt(Status).
+    halt().
 
 
 cmd_help(_Args) ->
@@ -46,15 +42,22 @@ cmd_help(_Args) ->
 
 
 cmd_stop(Args) ->
-    erlduce_utils:getopts([], Args, [], 0, 0, "stop", "\nStop ErlDuce node"),
+    erlduce_utils:getopts([], Args, [], 0, 0, "stop", "\nStop erlduce node"),
     {ok, Master} = erlduce_cli:ensure_connect(),
-    rpc:call(Master, init, stop, []).
+    case rpc:call(Master, init, stop, []) of
+        ok -> halt(0);
+        Error ->
+            io:fwrite(standard_error, "~p",[Error]),
+            halt(1)
+    end.
 
 
 connect() ->
     Master = case application:get_env(erlduce, master) of
         {ok, Node} -> Node;
-        undefined -> erlduce_utils:node(erlduce, erlduce_utils:host())
+        _ ->
+            io:fwrite(standard_error, "error: erlduce master is not set in config.~n",[]),
+            halt(1)
     end,
     case net_kernel:connect_node(Master) of
         true -> {ok, Master};
@@ -65,7 +68,7 @@ ensure_connect() ->
     case connect() of
         {ok, Master} -> {ok, Master};
         _ ->
-            io:fwrite(standard_error, "ErlDuce is not running~n",[]),
+            io:fwrite(standard_error, "erlduce is not running~n",[]),
             halt(1)
     end.
 

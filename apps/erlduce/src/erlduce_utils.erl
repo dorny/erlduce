@@ -4,7 +4,6 @@
 
 -export([
     start_application/1,
-    start_application/2,
     host/0,
     host/1,
     node/2,
@@ -33,10 +32,9 @@
     decode/1,
     decode/2,
 
-    resp/1,
     getopts/7,
-    die/1,
-    die/2,
+    cli_error/2,
+    cli_die/2,
     format_size/1,
     parse_size/1
 ]).
@@ -49,14 +47,6 @@
 -spec start_application(App::atom()) -> ok.
 start_application(App) ->
     start_ok(App, application:start(App, permanent)).
-
-%% @doc Start application and set env variables.
--spec start_application(App::atom(), Envs::list()) -> ok.
-start_application(App, Envs) ->
-    application:load(App),
-    [application:set_env(App, K, V) || {K,V} <- Envs],
-    start_application(App).
-
 start_ok(_App, ok) -> ok;
 start_ok(_App, {error, {already_started, _App}}) -> ok;
 start_ok(App, {error, {not_started, Dep}}) ->
@@ -201,23 +191,25 @@ start_slaves(Name, Hosts, Applications) ->
 start_slave(Name, Host, LinkTo, Applications) ->
     Paths = lists:foldr(fun(P, Acc)-> lists:concat([Acc," \"",filename:absname(P),"\""]) end, "", code:get_path()),
 
+    {ok,[[Progname]]} = init:get_argument(progname),
+
+    Opts = case init:get_argument(config) of
+        {ok,[[Config]]} -> [" -config \"", Config, "\""];
+        _ -> []
+    end,
     Res = slave:start(Host, Name, lists:concat([
         " -setcookie ", atom_to_list(erlang:get_cookie()),
         " -pa ", Paths
-    ]), LinkTo, erl),
+        | Opts
+    ]), LinkTo, Progname),
 
     case Res of
         {ok, Node} ->
-            lists:foreach(fun(App)->
-                application:load(App),
-                Envs = application:get_all_env(App),
-                rpc:call(Node, ?MODULE, start_application, [App,Envs])
-            end, Applications),
+            [rpc:call(Node, ?MODULE, start_application, [App]) || App <- Applications],
             Res;
         Error ->
             Error
     end.
-
 
 
 tar_load_modules(Src) ->
@@ -275,25 +267,6 @@ decode({snappy, Format}, Bytes) ->
 
 
 
-
-resp(Resp) ->
-    case Resp of
-        ok -> ok;
-        error -> error;
-        {badrpc, Reason} -> io:fwrite(standard_error, "error: ~p~n", [Reason]), error;
-        {error, Reason} -> io:fwrite(standard_error, "error: ~p~n", [Reason]), error;
-        {ok, Value} -> io:format("~p~n",[Value]), ok;
-        List when is_list(List) ->
-            L2 = [ resp(Val) || Val <- List],
-            case lists:member(error, L2) of
-                true -> error;
-                false -> ok
-            end;
-        _ -> resp({ok,Resp})
-    end.
-
-
-
 getopts(OptSpecList0, Args, Required, MinInputs, MaxInputs, Prog, UsageText) ->
     OptSpecList = [{help, $h, "help", undefined, "display this help and exit" } | OptSpecList0],
     case getopt:parse(OptSpecList, Args) of
@@ -307,27 +280,25 @@ getopts(OptSpecList0, Args, Required, MinInputs, MaxInputs, Prog, UsageText) ->
             % check required options
             lists:foreach(fun(Req)->
                 case lists:keymember(Req, 1, Opts) of
-                    false -> die("~p is required",[Req]);
+                    false -> cli_die("~p is required",[Req]);
                     _ -> ok
                 end
             end, Required),
             % check input length
             Len = length(Input),
             if
-                Len > MaxInputs -> die("too many arguments");
-                Len < MinInputs -> die("not enough arguments");
+                Len > MaxInputs -> cli_die("too many arguments",[]);
+                Len < MinInputs -> cli_die("not enough arguments",[]);
                 true -> {Opts, Input}
             end;
-        {error, Reason} -> die(Reason)
+        {error, Reason} -> cli_die("~p",[Reason])
     end.
 
+cli_error(Format,Args) ->
+    io:fwrite(standard_error, "error: "++Format++"~n", Args).
 
-die(Reason) ->
-    io:fwrite(standard_error, "error: ~p~n", [Reason]),
-    halt(1).
-
-die(Format, Args) ->
-    io:fwrite(standard_error, "error: "++Format++"~n", [Args]),
+cli_die(Format, Args) ->
+    cli_error(Format,Args),
     halt(1).
 
 

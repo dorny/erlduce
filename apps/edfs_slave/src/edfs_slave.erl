@@ -6,9 +6,9 @@
 
 -export([
     start_link/0,
-    read/2,
-    write/3,
-    delete/2,
+    read/1,
+    write/2,
+    delete/1,
     format/1,
     disk_check/1
 ]).
@@ -44,14 +44,13 @@ start_link() ->
     gen_server:start_link({local, ?MODULE},?MODULE, {}, []).
 
 
-
-read(BlobID,Hosts) ->
+read({BlobID,Hosts}) ->
     Localhost = erlduce_utils:host(),
     Hosts2 = case lists:member(Localhost, Hosts) of
         true -> [Localhost | lists:delete(Localhost, Hosts)];
         false -> Hosts
     end,
-    read(BlobID,Hosts,[]).
+    read(BlobID,Hosts2,[]).
 
 read(BlobID, [Host| Hosts], Errors) ->
     case p_read(BlobID, Host) of
@@ -77,7 +76,7 @@ p_read(BlobID, Host) when is_atom(Host) ->
     end.
 
 
-write(BlobID, Bytes, Hosts) ->
+write({BlobID,Hosts}, Bytes) ->
     Res = erlduce_utils:pmap_first(fun(Host)->
         p_write(BlobID, Bytes, Host)
     end, Hosts, ok),
@@ -98,9 +97,9 @@ p_write(BlobID, Bytes, Host) ->
     end.
 
 
-delete(BlobID, Nodes) ->
-    gen_server:abcast(Nodes, ?MODULE, {delete, BlobID}),
-    ok.
+delete({BlobID, Hosts}) ->
+    Nodes = [erlduce_utils:node(?MODULE,Host) || Host <- Hosts ],
+    gen_server:abcast(Nodes, ?MODULE, {delete, BlobID}).
 
 
 format(Nodes) ->
@@ -119,6 +118,7 @@ disk_check(Node) when is_atom(Node) ->
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 init(_Args) ->
+    application:load(edfs),
     {ok, DiskCheck} = application:get_env(os_mon, disk_space_check_interval),
     timer:apply_interval(DiskCheck*60*1000, ?MODULE, disk_check, [node()]),
 
@@ -252,6 +252,7 @@ p_write_task(BlobID, Filename, Pid, Host, Sem) ->
 p_write_file_local(BlobID, Filename, Bytes, Host, Sem) ->
     erlduce_utils:sem_wait(Sem),
     Result = prim_file:write_file(Filename, Bytes),
+    Result = ok,
     erlduce_utils:sem_signal(Sem),
     case Result of
         ok ->

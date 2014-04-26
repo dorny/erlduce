@@ -1,4 +1,4 @@
-{application, erlduce, [
+{application, edfs_slave, [
     {description, ""},
     {vsn, "0.0.1"},
     {registered, []},
@@ -6,8 +6,9 @@
         kernel,
         stdlib,
         lager,
-        edfs
+        sasl,
+        os_mon
     ]},
-    {mod, { erlduce, []}},
+    {mod, { edfs_slave_app, []}},
     {env, []}
 ]}.

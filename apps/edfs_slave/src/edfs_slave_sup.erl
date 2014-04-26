@@ -1,4 +1,4 @@
--module(erlduce_sup).
+-module(edfs_slave_sup).
 
 -behaviour(supervisor).
 
@@ -21,7 +21,8 @@ start_link() ->
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
-
 init(_Args) ->
-    {ok, { {one_for_one, 5, 10}, []}}.
+    {ok, { {one_for_one, 5, 10}, [
+        ?CHILD(edfs_slave, worker)
+    ]}}.
 

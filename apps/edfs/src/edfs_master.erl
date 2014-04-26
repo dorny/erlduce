@@ -37,6 +37,7 @@
     p_rm/1,
     p_stat/1
 ]).
+
 %% gen_server.
 -export([
     init/1,
@@ -114,7 +115,7 @@ node_up(Node) ->
 
 init(_Args) ->
     {ok, Hosts} = application:get_env(edfs, hosts),
-    {Slaves, Errors} = erlduce_utils:start_slaves(edfs_slave, Hosts, [sasl,os_mon,edfs]),
+    {Slaves, Errors} = erlduce_utils:start_slaves(edfs_slave, Hosts, [edfs_slave]),
     [lager:warning("Failed to start edfs_slave at ~p: ~p",[Host,Reason]) || {Host,Reason} <- Errors],
     edfs_slave:disk_check(Slaves),
     {ok, #state{
@@ -251,18 +252,21 @@ p_blob(BlobID) ->
     end).
 
 
-p_get_inode(<<"/">>) ->
-    {ok, 0};
-p_get_inode(Path) ->
-    p_get_inode(0, filename:split(Path)).
-p_get_inode(Inode, []) ->
+
+p_get_inode(Path) when is_binary(Path) ->
+    p_get_inode(filename:split(Path));
+p_get_inode([<<"/">> | Rest]) ->
+    p_get_inode2(0, Rest);
+p_get_inode(Parts) ->
+    p_get_inode2(0, Parts).
+p_get_inode2(Inode, []) ->
     {ok, Inode};
-p_get_inode(Inode, [Filename | T]) ->
+p_get_inode2(Inode, [Filename | T]) ->
     mnesia:activity(ets, fun()->
         case mnesia:read(edfs_rec, Inode) of
             [#edfs_rec{type=directory, children=Children}] ->
                 case gb_trees:lookup(Filename, Children) of
-                    {value, NextInode} -> p_get_inode(NextInode, T);
+                    {value, NextInode} -> p_get_inode2(NextInode, T);
                     none -> {error, enoent}
                 end;
             _ -> {error, enoent}
@@ -315,7 +319,7 @@ p_mkdir(Dirpath) ->
     PathParts = filename:split(Dirpath),
     {ParentParts,[Filename]} = lists:split(length(PathParts)-1, PathParts),
     mnesia:activity(transaction, fun()->
-        case p_get_inode(0,ParentParts) of
+        case p_get_inode(ParentParts) of
             {ok, ParentInode} -> p_mkdir(ParentInode,Filename);
             Error -> Error
         end
@@ -341,7 +345,7 @@ p_mkfile(Filepath) ->
     PathParts = filename:split(Filepath),
     {ParentParts,[Filename]} = lists:split(length(PathParts)-1, PathParts),
     mnesia:activity(transaction, fun()->
-        case p_get_inode(0,ParentParts) of
+        case p_get_inode(ParentParts) of
             {ok, ParentInode} -> p_mkfile(ParentInode, Filename);
             Error -> Error
         end
@@ -378,44 +382,57 @@ p_register_blob(BlobID, Host) ->
 p_rm(Path) ->
     PathParts = filename:split(Path),
     {ParentParts,[Filename]} = lists:split(length(PathParts)-1, PathParts),
-    mnesia:activity(transaction, fun()->
-        case p_get_inode(0,ParentParts) of
-            {ok, ParentInode} -> p_rm(ParentInode,Filename);
-            Error -> Error
-        end
-    end).
+    case p_get_inode(ParentParts) of
+        {ok, ParentInode} -> p_rm(ParentInode,Filename);
+        Error -> Error
+    end.
 p_rm(ParentInode, Filename) ->
-    case mnesia:read(edfs_rec, ParentInode) of
+    case mnesia:dirty_read(edfs_rec, ParentInode) of
         [Parent=#edfs_rec{type=directory, children=Children}] ->
             case gb_trees:lookup(Filename, Children) of
                 {value, Inode} ->
                     case p_rmf(Inode) of
-                        ok ->
-                            Children2 = gb_trees:delete(Filename, Children),
-                            mnesia:write(Parent#edfs_rec{children=Children2});
-                        Error ->
-                            Error
+                        ok -> p_unlink(ParentInode, Filename);
+                        Error -> Error
                     end;
                 none -> ok
             end;
         _ -> {error, enoent}
     end.
+p_unlink(ParentInode, Filename) ->
+    mnesia:activity(transaction, fun()->
+        case mnesia:read(edfs_rec, ParentInode) of
+            [Parent=#edfs_rec{type=directory, children=Children}] ->
+                Children2 = gb_trees:delete(Filename, Children),
+                mnesia:write(Parent#edfs_rec{children=Children2});
+            _ -> ok
+        end
+    end).
 p_rmf(Inode) ->
-    case mnesia:read(edfs_rec, Inode) of
+    case mnesia:dirty_read(edfs_rec, Inode) of
         [#edfs_rec{type=directory, children=Children}] ->
             p_each_children(fun({_,ChildInode}) ->
                 p_rmf(ChildInode)
             end, Children),
-            mnesia:delete({edfs_rec, Inode}),
-            p_free_inode(Inode),
-            ok;
+            mnesia:activity(transaction, fun()->
+                mnesia:delete({edfs_rec, Inode}),
+                mnesia:write(#edfs_inodes{inode=Inode})
+            end);
         [#edfs_rec{type=regular}] ->
-            % TODO delete blobs
-            mnesia:delete({edfs_rec, Inode}),
-            p_free_inode(Inode),
-            ok;
+            mnesia:activity(transaction, fun()->
+                case p_blobs(Inode) of
+                    {ok, Blobs} ->
+                        [edfs_slave:delete(Blob) || Blob <- Blobs],
+                        [mnesia:delete({edfs_blob,BlobID}) || {BlobID, _Hosts} <- Blobs],
+                        ok;
+                    _ -> ok
+                end,
+                mnesia:delete({edfs_rec, Inode}),
+                mnesia:write(#edfs_inodes{inode=Inode})
+            end);
         [] -> {error, enoent}
     end.
+
 
 p_stat(Path) ->
     mnesia:activity(transaction, fun()->
@@ -433,10 +450,11 @@ p_stat(Path) ->
 %% ===================================================================
 %% UTILS
 %% ===================================================================
+
 p_master_node() ->
     case application:get_env(edfs,master) of
         {ok, Node} -> Node;
-        undefined -> erlduce_utils:node(erlduce, erlduce_utils:host())
+        undefined -> exit({error,{env_not_set,{edfs,master}}})
     end.
 
 
@@ -452,12 +470,6 @@ p_next_inode() ->
                 mnesia:delete({edfs_inodes, NextInode}),
                 NextInode
         end
-    end).
-
-
-p_free_inode(Inode) ->
-    mnesia:activity(transaction, fun()->
-        mnesia:write(#edfs_inodes{inode=Inode})
     end).
 
 

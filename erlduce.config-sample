@@ -1,24 +1,26 @@
 [
     {erlduce, [
-        {work_dir, "/usr/local/var/erlduce"},
+        {work_dir, "/home/dorny/tmp/erlduce"},
+        {master, 'erlduce@master'},
         {hosts,[
-
+            {'slave1', 4}
         ]}
     ]},
 
     {edfs, [
-        {work_dir, "/usr/local/var/erlduce/edfs"},
+        {work_dir, "/home/dorny/tmp/erlduce/edfs"},
         {block_size, "32 MB"},
         {replicas, 3},
         {max_read_threads, 8},
         {max_write_threads, 2},
+        {master, 'erlduce@master'},
         {hosts,[
-
+            'slave1'
         ]}
     ]},
 
     {mnesia, [
-        {dir, "/usr/local/var/erlduce/edfs/mnesia"}
+        {dir, "/home/dorny/tmp/erlduce/edfs/mnesia"}
     ]},
 
     {os_mon,[
