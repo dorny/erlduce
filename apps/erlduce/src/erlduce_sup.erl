@@ -16,12 +16,20 @@
 %% ===================================================================
 
 start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    Node = node(),
+    Args = case application:get_env(erlduce,master) of
+        undefined ->
+            application:set_env(erlduce,master,Node),
+            master;
+        {ok, Node} -> master;
+        {ok, _OtherNode} -> slave
+    end,
+    supervisor:start_link({local, ?MODULE}, ?MODULE, Args).
 
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
 
-init([]) ->
+init(master) ->
     {ok, { {one_for_one, 5, 10}, []}}.
 

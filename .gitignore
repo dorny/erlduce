@@ -1,4 +1,4 @@
-ebin
+apps/*/ebin
 deps/*/ebin
 log
 erlduce.config

@@ -16,15 +16,27 @@
 %% ===================================================================
 
 start_link() ->
-    {ok, Pid} = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
-    erlang:unlink(Pid),
-    {ok, Pid}.
+    Node = node(),
+    Args = case application:get_env(edfs,master) of
+        undefined ->
+            application:set_env(edfs,master,Node),
+            master;
+        {ok, Node} -> master;
+        {ok, _OtherNode} -> slave
+    end,
+    supervisor:start_link({local, ?MODULE}, ?MODULE, Args).
 
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
 
-init([]) ->
+init(master) ->
+    ok=erlduce_utils:start_application(mnesia),
+    {ok, { {one_for_one, 5, 10}, [
+        ?CHILD(edfs_master, worker)
+    ]}};
+
+init(slave) ->
     {ok, { {one_for_one, 5, 10}, [
         ?CHILD(edfs_slave, worker)
     ]}}.

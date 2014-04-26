@@ -1,25 +1,2 @@
 #!/bin/bash
-
-if [ -z "$ERLDUCE_HOME" ]; then
-    FILE=`readlink -m "$0"`
-    DIR=`dirname "$FILE"`
-    ERLDUCE_HOME=`cd "$DIR"; cd ..; pwd;`
-fi
-
-CMD=$1
-shift
-
-ARGS=`echo -n "$@" | sed 's/"/\\\\"/g'`
-HOST=`hostname`
-NODE="'erlduce@$HOST'"
-
-erl \
-    -noshell \
-    -sname "edfs-cmd-$$" \
-    -pa "$ERLDUCE_HOME/ebin" "$ERLDUCE_HOME/deps/"*"/ebin" \
-    -config "$ERLDUCE_HOME/erlduce.config" \
-    -erlduce master $NODE \
-    -eval "
-        edfs_cli:start(),
-        edfs_cli:cmd(\"$CMD\", \"$ARGS\").
-    "
+erlduce fs "$@"

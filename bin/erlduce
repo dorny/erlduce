@@ -7,31 +7,28 @@ if [ -z "$ERLDUCE_HOME" ]; then
 fi
 
 
+if [ -z "$ERLDUCE_CONFIG" ]; then
+    ERLDUCE_CONFIG="$ERLDUCE_HOME/erlduce.config"
+fi
+
+EBIN_PATHS="$ERLDUCE_HOME"/apps/*/ebin
+EBIN_PATHS="$EBIN_PATHS $ERLDUCE_HOME"/deps/*/ebin
+
 if [ -z "$1" ] || [ "$1" == "start" ]; then
     shift
     erl \
-        -pa "$ERLDUCE_HOME/ebin" "$ERLDUCE_HOME/deps/"*"/ebin" \
+        -pa $EBIN_PATHS \
         -rsh ssh \
-        -config "$ERLDUCE_HOME/erlduce.config" \
         -sname erlduce \
+        -config "$ERLDUCE_CONFIG" \
         -s erlduce \
         $@;
 else
-    CMD=$1
-    shift
-
-    ARGS=`echo -n "$@" | sed 's/"/\\\\"/g'`
-    HOST=`hostname`
-    NODE="'erlduce@$HOST'"
-
     erl \
+        -pa $EBIN_PATHS \
         -noshell \
         -sname "erlduce-cmd-$$" \
-        -pa "$ERLDUCE_HOME/ebin" "$ERLDUCE_HOME/deps/"*"/ebin" \
-        -config "$ERLDUCE_HOME/erlduce.config" \
-        -erlduce master $NODE \
-        -eval "
-            erlduce_cli:start(),
-            erlduce_cli:cmd(\"$CMD\", \"$ARGS\").
-        "
+        -config "$ERLDUCE_CONFIG" \
+        -s erlduce_cli cmd \
+        -extra "$@"
 fi
