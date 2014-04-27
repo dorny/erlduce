@@ -46,7 +46,7 @@ run(RunID, Start, Modules, DriverArgs) when is_atom(RunID), is_atom(Start), is_l
                 rpc:call(Node, erlduce_utils, code_load_modules, [Modules])
             end, Slaves),
             erlduce_utils:code_load_modules(Modules),
-            Start:run(Slaves,DriverArgs);
+            Start:run(RunID,Slaves,DriverArgs);
         Error-> Error
     end.
 

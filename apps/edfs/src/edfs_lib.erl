@@ -4,7 +4,8 @@
 
 -export([
     read_file/3,
-    split/3
+    split/3,
+    iter_write_file/3
 ]).
 
 
@@ -75,4 +76,20 @@ read_lines(IoDev, Number, Acc) ->
                 [] -> eof;
                 _ -> {ok, {Acc, IoDev}}
             end
+    end.
+
+
+
+iter_write_file(Path, Encode, Replicas) ->
+    fun
+        (open, WorkerID) ->
+            File = [Path,"-",integer_to_list(WorkerID)],
+            {ok, Inode} = edfs:mkfile(File),
+            Inode;
+        (close, _Inode) ->
+            ok;
+        (Terms, Inode) ->
+            Bytes = Encode(Terms),
+            edfs:write(Inode, Bytes, Replicas),
+            Inode
     end.

@@ -3,28 +3,47 @@
 -author("Michal Dorner <dorner.michal@gmail.com>").
 
 -export([
-    run/2
+    run/3
 ]).
 
 
-run(Nodes, Args) ->
+run(RunID, Slaves, Args=[Src, Dest]) ->
 
-    io:format("nodes: ~p~nargs: ~p~n",[Nodes, Args]),
+    io:format("~n====== DRIVER STARTED ======~n"),
+    io:format( lists:concat([
+        "run_id: ~p~n",
+        "module: ~p~n",
+        "slaves: ~p~n",
+        "args:   ~p~n~n"
+    ]),[RunID, ?MODULE, Slaves, Args]),
 
-    % erlduce_job:start_link(Nodes, [
-    %     {input, edfs:input("dataset")},
-    %     {map, fun(Path, Bytes, Write) ->
-    %         DocID = lists:last(filename:split(Path)),
-    %         words(Bytes, fun(Word)-> Write({{Word,DocID}, 1}) end),
-    %         ok
-    %     end},
-    %     {combine, fun(_Key, A,B) ->
-    %         A+B
-    %     end},
-    %     {output, edfs_lib:iter_write_file("/tmp/tf-idf/1/part", erlang:term_to_binary/1, 1)}
-    % ]),
+    TmpDir = filename:join("/tmp", RunID),
+    OutDir1 = filename:join(TmpDir, "1"),
+    OutDir2 = filename:join(TmpDir, "2"),
 
-    % erlduce_job:start_link(Nodes, [
+    ok = edfs:rm(TmpDir),
+    ok = edfs:rm(Dest),
+
+    edfs:mkdir(TmpDir),
+    edfs:mkdir(OutDir1),
+    edfs:mkdir(OutDir2),
+    edfs:mkdir(Dest),
+
+    {ok,Pid} = erlduce_job:start_link(Slaves, [
+        {input, edfs:input("dataset")},
+        {map, fun(Path, Bytes, Write) ->
+            DocID = lists:last(filename:split(Path)),
+            words(Bytes, fun(Word)-> Write({{Word,DocID}, 1}) end),
+            ok
+        end},
+        {combine, fun(_Key, A,B) ->
+            A+B
+        end},
+        {output, edfs_lib:iter_write_file("/tmp/tf-idf/1/part", fun erlang:term_to_binary/1, 1)}
+    ]),
+    erlduce_job:wait(Pid),
+
+    % erlduce_job:start_link(Slaves, [
     %     {input, edfs:input("/tmp/tf-idf/1")},
     %     {map, fun(Path, Bytes, Write) ->
     %         List = binary_to_term(Bytes),
@@ -38,7 +57,7 @@ run(Nodes, Args) ->
     %     {output, edfs_lib:iter_write_file("/tmp/tf-idf/2/part", erlang:term_to_binary/1, 1)}
     % ]),
 
-    % erlduce_job:start_link(Nodes, [
+    % erlduce_job:start_link(Slaves, [
     %     {input, edfs:input("/tmp/tf-idf/2")},
     %     {map, fun(Path, Bytes, Write) ->
     %         List = binary_to_term(Bytes),

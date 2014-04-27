@@ -1,0 +1,12 @@
+{application, erlduce_slave, [
+    {description, ""},
+    {vsn, "0.0.1"},
+    {registered, []},
+    {applications, [
+        kernel,
+        stdlib,
+        lager
+    ]},
+    {mod, { erlduce_slave_app, []}},
+    {env, []}
+]}.
