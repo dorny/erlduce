@@ -229,7 +229,6 @@ case erl_tar:extract(Src, [memory,compressed]) of
 end.
 
 
-
 code_load_modules(Modules) ->
     lists:foreach(fun({Mod, Bin, Fn})-> {module, _Mod} = code:load_binary(Mod, Fn, Bin) end, Modules),
     ok.
@@ -273,7 +272,7 @@ getopts(OptSpecList0, Args, Required, MinInputs, MaxInputs, Prog, UsageText) ->
         {ok, {Opts, Input}} ->
             case lists:member(help, Opts) of
                 true ->
-                    getopt:usage(OptSpecList, "edfs "++Prog, UsageText),
+                    getopt:usage(OptSpecList, Prog, UsageText),
                     halt(1);
                 false -> ok
             end,

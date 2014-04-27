@@ -56,7 +56,7 @@ cmd_cat(Args) ->
     OptSpecList = [
         {extract, $x, "extract", {atom,none}, "decompress stored data: none,zip,snappy"}
     ],
-    {Opts, Paths} = erlduce_utils:getopts(OptSpecList, Args, [], 1, infinity, "cat",
+    {Opts, Paths} = erlduce_utils:getopts(OptSpecList, Args, [], 1, infinity, "edfs cat",
         "[FILE ...]\nWrite FILE(s) to standard output"),
     Extract = proplists:get_value(extract, Opts),
     erlduce_cli:ensure_connect(),
@@ -70,7 +70,7 @@ cmd_cat(Args) ->
 
 
 cmd_format(Args) ->
-    erlduce_utils:getopts([], Args, [], 0, 0, "format","\nFormat EDFS storage"),
+    erlduce_utils:getopts([], Args, [], 0, 0, "edfs format","\nFormat EDFS storage"),
     erlduce_cli:ensure_connect(),
     edfs:format().
 
@@ -85,7 +85,7 @@ cmd_import(Args) ->
         {replica, $r, "replicas", {integer, DefaultReplicas}, "number of replicas"},
         {type, $t, "type", {atom, text}, "file type: text, binary, lines"}
     ],
-    {Opts0, Paths} = erlduce_utils:getopts(OptSpecList, Args, [], 2, infinity,"import",
+    {Opts0, Paths} = erlduce_utils:getopts(OptSpecList, Args, [], 2, infinity,"edfs import",
         "[SOURCE ...] DESTINATION\nImport files and directories into edfs storage"),
     BlockSize = erlduce_utils:parse_size(proplists:get_value(block_size, Opts0)),
     Opts = lists:keyreplace(block_size, 1, Opts0, {block_size, BlockSize}),
@@ -97,7 +97,7 @@ cmd_import(Args) ->
 
 cmd_ls(Args) ->
     OptSpecList = [{list, $l, undefined, undefined, "use a long listing format"}],
-    {Opts, Paths} = erlduce_utils:getopts(OptSpecList, Args, [], 0, infinity, "ls",
+    {Opts, Paths} = erlduce_utils:getopts(OptSpecList, Args, [], 0, infinity, "edfs ls",
         "[DIRECTORY ...]\nList files in DIRECTORY(ies)"),
     ListOpt = lists:member(list, Opts),
     Paths2 = case Paths of
@@ -114,7 +114,7 @@ cmd_ls(Args) ->
 
 
 cmd_mkdir(Args) ->
-    {_, Paths} = erlduce_utils:getopts([], Args, [], 1, infinity, "mkdir",
+    {_, Paths} = erlduce_utils:getopts([], Args, [], 1, infinity, "edfs mkdir",
         "[DIRECTORY ...]\nCreate new DIRECTORY(ies)"),
     erlduce_cli:ensure_connect(),
     [ case edfs:mkdir(Path) of
@@ -124,7 +124,7 @@ cmd_mkdir(Args) ->
 
 
 cmd_mkfile(Args) ->
-    {_, Paths} = erlduce_utils:getopts([], Args, [], 1, infinity, "mkfile", "[FILE ...]\nCreate new FILE(s)"),
+    {_, Paths} = erlduce_utils:getopts([], Args, [], 1, infinity, "edfs mkfile", "[FILE ...]\nCreate new FILE(s)"),
     erlduce_cli:ensure_connect(),
     [ case edfs:mkfile(Path) of
         {ok, _Inode} -> ok;
@@ -133,7 +133,7 @@ cmd_mkfile(Args) ->
 
 
 cmd_rm(Args) ->
-    {_, Paths} = erlduce_utils:getopts([], Args, [], 1, infinity, "rm", "[FILE ...]\nRemove FILE(s)"),
+    {_, Paths} = erlduce_utils:getopts([], Args, [], 1, infinity, "edfs rm", "[FILE ...]\nRemove FILE(s)"),
     erlduce_cli:ensure_connect(),
     [ edfs:rm(Path) || Path <- Paths ].
 
