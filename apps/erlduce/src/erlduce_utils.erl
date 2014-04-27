@@ -9,9 +9,6 @@
     node/2,
 
     pmap/2,
-    pmap_first/2,
-    pmap_first/3,
-    pmap_first_wait/3,
 
     sem_new/1,
     sem_new/2,
@@ -83,33 +80,6 @@ pmap(F, L) ->
     Parent = self(),
     [ receive {Pid, Result} -> Result end || Pid <- [spawn_link(fun() -> Parent ! {self(), F(X)} end) || X <- L]].
 
-%% @doc Parallel map on local node. Returns immediatelly after first function returns anything.
--spec pmap_first(F::function(), L::list()) -> any().
-pmap_first(F, L) ->
-    pmap_first(F,L, '_').
-
-%% @doc Parallel map on local node.
-%%      Returns {ok, Result} when first function return M=Result or M(Result)=true, otherwise it returns false
--spec pmap_first(F::function(), L::list(), M::function()|term()) -> any().
-pmap_first(F, L, M) ->
-    Master = spawn_link(?MODULE, pmap_first_wait, [length(L), M, self()]),
-    [spawn_link(fun() -> Master ! F(X) end) || X <- L],
-    receive
-        {Master, Result} -> Result
-    end.
-%% @private
-pmap_first_wait(0, _, Parent) -> Parent ! {self(), false};
-pmap_first_wait(Len, M, Parent)->
-    receive
-        M -> Parent ! {self(), {ok, M}};
-        Result when is_function(M) ->
-            case M(Result) of
-                true -> Parent ! {self(), {ok,Result}};
-                _ -> pmap_first_wait(Len -1, M, Parent)
-            end;
-        Result when M=:='_' -> Parent ! {self(), {ok, Result}};
-        _ -> pmap_first_wait(Len -1, M, Parent)
-    end.
 
 %% @doc Spawns new Semaphore
 -spec sem_new(Full::number()) -> pid().

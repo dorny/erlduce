@@ -74,11 +74,11 @@ p_read(BlobID, Host) when is_atom(Host) ->
 
 
 write({BlobID,Hosts}, Bytes) ->
-    Res = erlduce_utils:pmap_first(fun(Host)->
+    Res = erlduce_utils:pmap(fun(Host)->
         p_write(BlobID, Bytes, Host)
-    end, Hosts, ok),
-    case Res of
-        {ok, _} -> ok;
+    end, Hosts),
+    case lists:member(ok, Res)  of
+        true -> ok;
         false -> {error, failed_to_write_bytes}
     end.
 p_write(BlobID, Bytes, Host) ->
@@ -121,7 +121,7 @@ init(_Args) ->
 
     {ok, Reads} = application:get_env(edfs, max_read_threads),
     {ok, Writes} = application:get_env(edfs, max_write_threads),
-    {ok, WorkDir} = application:get_env(edfs, work_dir),
+    {ok, WorkDir} = application:get_env(edfs, dir),
 
     MountedOn = os:cmd("df '"++WorkDir++"' | sed -n '2p'  | awk '{print $6}'"),
 
@@ -223,7 +223,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 
 blob_filename({Inode, Ord}, WorkDir) ->
-    filename:join([WorkDir,<<"blobs">>, [integer_to_list(Inode),<<"-">>,integer_to_list(Ord)]]).
+    filename:join(WorkDir, integer_to_list(Inode)++"-"++integer_to_list(Ord)).
 
 
 p_write_task(BlobID, Filename, Pid, Host, Sem) ->

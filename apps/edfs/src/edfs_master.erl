@@ -28,7 +28,6 @@
     p_task/3,
     p_blobs/1,
     p_get_inode/1,
-    p_get_next_hosts/2,
     p_ls/1,
     p_mkblob/4,
     p_mkdir/1,
@@ -51,14 +50,7 @@
 -include("edfs.hrl").
 
 -define( EDFS, {?MODULE, p_master_node()}).
--define( TASK(F, A),
-    case gen_server:call(?EDFS, {task, F, A}, 5000) of
-        {ok, Pid} ->
-            receive
-                {Pid, Result} -> Result
-            end;
-        Error -> Error
-    end).
+-define( RPC(F,A), rpc:call(p_master_node(),?MODULE,F,A)).
 
 -record(state, {
     nodes :: list(node()),
@@ -73,34 +65,34 @@ start_link() ->
     gen_server:start_link({local, ?MODULE},?MODULE, {}, []).
 
 stat(Path) when is_binary(Path) ->
-    ?TASK(p_stat, [Path]).
+    ?RPC(p_stat, [Path]).
 
 blobs(Path) when is_binary(Path) orelse is_integer(Path) ->
-    ?TASK(p_blobs, [Path]).
+    ?RPC(p_blobs, [Path]).
 
 format() ->
     gen_server:call(?EDFS, format).
 
 get_inode(Path) when is_binary(Path) ->
-    ?TASK(p_get_inode, [Path]).
+    ?RPC(p_get_inode, [Path]).
 
 ls(Path) when is_binary(Path) orelse is_integer(Path) ->
-    ?TASK(p_ls,[Path]).
+    ?RPC(p_ls,[Path]).
 
 mkblob(Inode, Size, Replicas) when is_integer(Inode), is_integer(Size), is_integer(Replicas) ->
-    ?TASK(p_mkblob,[Inode, Size, Replicas, erlduce_utils:host()]).
+    ?RPC(p_mkblob,[Inode, Size, Replicas, erlduce_utils:host()]).
 
 mkdir(Path) when is_binary(Path) ->
-    ?TASK(p_mkdir,[Path]).
+    ?RPC(p_mkdir,[Path]).
 
 mkfile(Path) when is_binary(Path) ->
-    ?TASK(p_mkfile, [Path]).
+    ?RPC(p_mkfile, [Path]).
 
 register_blob(BlobID, Host) ->
-    ?TASK(p_register_blob, [BlobID, Host]).
+    ?RPC(p_register_blob, [BlobID, Host]).
 
 rm(Path) when is_binary(Path) ->
-    ?TASK(p_rm,[Path]).
+    ?RPC(p_rm,[Path]).
 
 
 node_down(Node, Reason) ->
@@ -114,6 +106,10 @@ node_up(Node) ->
 %% ===================================================================
 
 init(_Args) ->
+    case mnesia:system_info(use_dir) of
+        true -> ok;
+        false -> lager:warning("Mnesia is not using specified dir")
+    end,
     {ok, Hosts} = application:get_env(edfs, hosts),
     {Slaves, Errors} = erlduce_utils:start_slaves(edfs_slave, Hosts, [edfs_slave]),
     [lager:warning("Failed to start edfs_slave at ~p: ~p",[Host,Reason]) || {Host,Reason} <- Errors],
@@ -138,9 +134,6 @@ handle_call( {get_next_hosts, N, PrefHost}, _From, State=#state{queue=Nodes0}) -
 
 handle_call( format, _From, State=#state{nodes=Nodes}) ->
     {reply, p_format(Nodes), State};
-
-handle_call( {task, F, A}, {Pid, _Tag}, State) ->
-    {reply, {ok, spawn(?MODULE, p_task, [F,A,Pid])}, State};
 
 handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
@@ -296,16 +289,16 @@ p_ls(Inode) when is_integer(Inode) ->
 
 p_mkblob(Inode, Size, Replicas, PrefHost) ->
     case p_get_next_hosts(Replicas, PrefHost) of
-        {ok, Hosts} -> p_mkblob(Inode, Size, Hosts);
+        {ok, Hosts} -> p_mkblob2(Inode, Size, Replicas, Hosts);
         Error -> Error
     end.
-p_mkblob(Inode, Size, Hosts) ->
+p_mkblob2(Inode, Size, Replicas, Hosts) ->
     mnesia:activity(transaction, fun()->
         case mnesia:wread({edfs_rec, Inode}) of
             [Rec=#edfs_rec{type=regular, children=BlobsCount}] ->
                 BlobId = {Inode, BlobsCount+1},
                 mnesia:write(Rec#edfs_rec{children=BlobsCount+1}),
-                mnesia:write(#edfs_blob{ id=BlobId, size=Size, replicas=length(Hosts)}),
+                mnesia:write(#edfs_blob{ id=BlobId, size=Size, replicas=Replicas}),
                 {ok, {BlobId, Hosts}};
             [_] ->
                 {error,eisdir};
