@@ -124,7 +124,7 @@ level_to_atom(String) ->
 open_logfile(Name, Buffer) ->
     case filelib:ensure_dir(Name) of
         ok ->
-            Options = [append, raw] ++
+            Options = [append] ++
             case  Buffer of
                 {Size, Interval} when is_integer(Interval), Interval >= 0, is_integer(Size), Size >= 0 ->
                     [{delayed_write, Size, Interval}];

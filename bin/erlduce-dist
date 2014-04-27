@@ -6,49 +6,8 @@ if [ -z "$ERLDUCE_HOME" ]; then
     ERLDUCE_HOME=`cd "$DIR"; cd ..; pwd;`
 fi
 
-TEMP="/tmp/erlduce.tar"
-DIRNAME=`basename $ERLDUCE_HOME`
-PARENT=`readlink -m "$ERLDUCE_HOME/.."`
-HOSTNAME=`hostname`
-
-HOSTS=`erl -noshell -eval "
-    {ok,[Config]} = file:consult(\"$ERLDUCE_HOME/erlduce.config\"),
-    Opts = proplists:get_value(erlduce,Config),
-    Nodes = proplists:get_value(nodes,Opts),
-    [io:format(\"~s \",[Host]) || {Host, _Slots} <- Nodes],
-    halt().
-"`
-
 if [ $# -gt 0 ]; then
-    for FN in $@; do
-        P=`readlink -m "$FN"`
-        for HOST in $HOSTS; do
-            if [ "$HOST" != "$HOSTNAME" ]; then
-                scp "$P" "$HOST:$P"
-            fi
-        done
-    done
+    erlduce dist "$@"
 else
-    tar -czf "$TEMP" -C "$PARENT" "$DIRNAME"
-    WORK_DIR=`erl -noshell -eval "
-        {ok,[Config]} = file:consult(\"$ERLDUCE_HOME/erlduce.config\"),
-        Opts = proplists:get_value(erlduce,Config),
-        io:format(\"~s\",[proplists:get_value(work_dir,Opts)]),
-        halt().
-    "`
-
-    DIRS=""
-    for DIR in "blobs" "jobs" "mnesia"; do
-        DIRS="$DIRS $WORK_DIR/$DIR"
-    done
-    mkdir -p $DIRS
-
-    for HOST in $HOSTS; do
-        if [ "$HOST" != "$HOSTNAME" ]; then
-            scp "$TEMP" "$HOST:$TEMP"
-            ssh $HOST "mkdir -p $DIRS; tar -xzf '$TEMP' -C '$PARENT' -m"
-        fi
-    done
+    erlduce dist `find "$ERLDUCE_HOME" -wholename '*/ebin/*' -o -wholename '*/priv/*' -o -name '*.config'`
 fi
-
-
