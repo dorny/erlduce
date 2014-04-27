@@ -10,7 +10,7 @@
 -export([
     start/0,
     stop/0,
-    run/3
+    run/4
 ]).
 
 
@@ -38,15 +38,16 @@ stop() ->
     application:stop(erlduce).
 
 
-run(RunID,Opts,DriverArgs) when is_atom(RunID), is_list(Opts), is_list(DriverArgs) ->
-    {ok, Resources} = application:get_env(erlduce,hosts),
-    TarPath = proplists:get_value(tar, Opts),
-    case erlduce_utils:tar_load_modules(TarPath) of
-        {ok, Modules} ->
+run(RunID, Start, Modules, DriverArgs) when is_atom(RunID), is_atom(Start), is_list(Modules), is_list(DriverArgs) ->
+    case erlduce_master:run_slaves(RunID) of
+        {ok, []} -> {error, no_slots};
+        {ok, Slaves} ->
+            erlduce_utils:pmap(fun({Node,_})->
+                rpc:call(Node, erlduce_utils, code_load_modules, [Modules])
+            end, Slaves),
             erlduce_utils:code_load_modules(Modules),
-            Mod = proplists:get_value(start, Opts),
-            Hosts = [Host || {Host, _} <- Resources],
-            {Slaves, Errors} = erlduce_utils:start_slaves(RunID,Hosts,[erlduce_slave]),
-            todo;
-        Error -> Error
+            Start:run(Slaves,DriverArgs);
+        Error-> Error
     end.
+
+

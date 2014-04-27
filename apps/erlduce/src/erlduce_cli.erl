@@ -97,12 +97,27 @@ cmd_fs(Args) ->
 cmd_run(Args) ->
     OptSpecList = [
         {tar, $t, "tar", string, "Path to tar file with compiled sources"},
+        {pa, $p, "path", string, "Path to directory with compiled sources"},
         {start, $s, "start", atom, "Name of a main module"}
     ],
-    {Opts, DriverArgs} = erlduce_utils:getopts(OptSpecList, Args, [tar,start], 0, infinity, "erlduce run","Run erlduce driver"),
+    {Opts, DriverArgs} = erlduce_utils:getopts(OptSpecList, Args, [start], 0, infinity, "erlduce run","Run erlduce driver"),
     Start = proplists:get_value(start, Opts),
     RunID = new_job_id(Start),
-    case erlduce:run(RunID,Opts,DriverArgs) of
+
+    PaModules = lists:flatmap(fun(Path)->
+        case erlduce_utils:path_load_modules(Path) of
+            {ok, Modules} -> Modules;
+            {error,Reason} -> io:fwrite(standard_error,"error: ~p: ~p~n",[Path,Reason]), halt(1)
+        end
+    end, proplists:get_all_values(pa, Opts)),
+    TarModules = lists:flatmap(fun(Path)->
+        case erlduce_utils:tar_load_modules(Path) of
+            {ok, Modules} -> Modules;
+            {error,Reason} -> io:fwrite(standard_error,"error: ~p: ~p~n",[Path,Reason]), halt(1)
+        end
+    end, proplists:get_all_values(tar, Opts)),
+    Modules = PaModules++TarModules,
+    case erlduce:run(RunID, Start, Modules, DriverArgs) of
         ok -> halt();
         {ok, Result} -> io:format("~p~n",[Result]), halt();
         {error, Reason} -> io:fwrite(standard_error, "error: ~p~n", [Reason]), halt(1)

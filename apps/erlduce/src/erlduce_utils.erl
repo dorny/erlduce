@@ -16,10 +16,10 @@
     sem_wait/1,
     sem_signal/1,
 
-    start_slaves/2,
-    start_slaves/3,
+    start_slaves/4,
     start_slave/4,
 
+    path_load_modules/1,
     tar_load_modules/1,
     code_load_modules/1,
 
@@ -132,28 +132,15 @@ sem_signal(Pid) ->
     end.
 
 
-
-%% @doc Start salves with Name on each Host in parallel.
--spec start_slaves(Name::atom(), Hosts::list(atom())) ->
-    {node_list_ok(), node_list_error()}.
-start_slaves(Name, Hosts) ->
-    start_slaves(Name, Hosts, []).
-
 %% @doc Start salves with Name on each Host in parallel.
 %%      Each Application will be run with env variables from master node.
--spec start_slaves(Name::atom(), Hosts::list(atom()), Applications::list(atom())) ->
+-spec start_slaves(Name::atom(), Hosts::list(atom()), Applications::list(atom()), LinkTo::pid()) ->
     {node_list_ok(), node_list_error()}.
-start_slaves(Name, Hosts, Applications) ->
-    Master = self(),
-    Slaves = pmap(fun(Host)->
-        {Host, start_slave(Name,Host,Master, Applications)}
-    end, Hosts),
-    lists:foldl(fun
-        ({Host, {ok, Node}}, {Ok,Err}) ->
-            {[Node|Ok], Err};
-        ({Host, Error}, {Ok,Err}) ->
-            {Ok, [{Host, Error}|Err]}
-    end, {[],[]}, Slaves).
+start_slaves(Name, Hosts, Applications, LinkTo) ->
+    pmap(fun
+        (H={Host,Meta})-> {H, start_slave(Name,Host,LinkTo, Applications)};
+        (Host)-> {Host, start_slave(Name,Host,LinkTo, Applications)}
+    end, Hosts).
 
 %% Start linked slave with name and start applications.
 -spec start_slave(Name::atom(), Host::atom(), LinkTo::pid(), Applications::list(atom())) ->
@@ -181,6 +168,12 @@ start_slave(Name, Host, LinkTo, Applications) ->
             Error
     end.
 
+path_load_modules(Src) ->
+    {ok, filelib:fold_files(Src,".*\.beam", true, fun(Filename,Acc)->
+        Mod = list_to_atom(filename:rootname(filename:basename(Filename))),
+        {ok, Bin} = file:read_file(Filename),
+        [{Mod, Bin, Filename} | Acc]
+    end, [])}.
 
 tar_load_modules(Src) ->
 case erl_tar:extract(Src, [memory,compressed]) of

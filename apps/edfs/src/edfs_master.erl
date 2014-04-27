@@ -111,13 +111,17 @@ init(_Args) ->
         false -> lager:warning("Mnesia is not using specified dir")
     end,
     {ok, Hosts} = application:get_env(edfs, hosts),
-    {Slaves, Errors} = erlduce_utils:start_slaves(edfs_slave, Hosts, [edfs_slave]),
-    [lager:warning("Failed to start edfs_slave at ~p: ~p",[Host,Reason]) || {Host,Reason} <- Errors],
+    Slaves0 = erlduce_utils:start_slaves(edfs_slave, Hosts,[edfs_slave], self()),
+    Slaves = lists:foldl(fun
+        ({_, {ok,Node}}, Acc) -> [Node | Acc];
+        ({Host, {error,Reason}}, Acc) -> lager:warning("Failed to start wroker at ~p: ~p",[Host,Reason]), Acc
+    end, [], Slaves0),
     edfs_slave:disk_check(Slaves),
     {ok, #state{
         nodes = Slaves,
         queue = Slaves
     }}.
+
 
 handle_call( {get_next_hosts,_N, _H}, _From, State=#state{queue=[]}) ->
     {reply, {error, enospc}, State};
@@ -382,7 +386,7 @@ p_rm(Path) ->
     end.
 p_rm(ParentInode, Filename) ->
     case mnesia:dirty_read(edfs_rec, ParentInode) of
-        [Parent=#edfs_rec{type=directory, children=Children}] ->
+        [#edfs_rec{type=directory, children=Children}] ->
             case gb_trees:lookup(Filename, Children) of
                 {value, Inode} ->
                     case p_rmf(Inode) of

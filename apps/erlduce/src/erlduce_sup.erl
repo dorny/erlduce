@@ -23,5 +23,7 @@ start_link() ->
 %% ===================================================================
 
 init(_Args) ->
-    {ok, { {one_for_one, 5, 10}, []}}.
+    {ok, { {one_for_one, 5, 10}, [
+        ?CHILD(erlduce_master, worker)
+    ]}}.
 
