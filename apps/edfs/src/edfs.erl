@@ -19,6 +19,7 @@
     ls/1,
     mkdir/1,
     mkfile/1,
+    read/1,
     rm/1,
     stat/1,
     write/3
@@ -112,6 +113,10 @@ ls(Path) ->
 
 mkdir(Path)->
     edfs_master:mkdir(p_as_binary(Path)).
+
+
+read(Blob) ->
+    edfs_slave:read(Blob).
 
 
 rm(Path) ->
