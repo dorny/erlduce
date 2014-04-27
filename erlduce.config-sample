@@ -25,7 +25,10 @@
 
     {os_mon,[
         {disk_space_check_interval, 5},
-        {disk_almost_full_threshold, 0.95}
+        {disk_almost_full_threshold, 0.95},
+        {start_cpu_sup, false},
+        {start_memsup, false},
+        {start_os_sup, false}
     ]},
 
     {sasl,[
