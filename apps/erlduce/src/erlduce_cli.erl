@@ -6,6 +6,7 @@
     cmd/0,
     cmd_help/1,
     cmd_dist/1,
+    cmd_fs/1,
     cmd_run/1,
     cmd_stop/1,
     connect/0,
@@ -15,9 +16,10 @@
 
 cmd() ->
     application:load(erlduce),
+    application:load(edfs),
+    application:load(mnesia),
     Args = init:get_plain_arguments(),
     case Args of
-        ["fs" | TArgs] -> edfs_cli:cmd(TArgs);
         [StrCmd | TArgs] ->
             Cmd = list_to_atom("cmd_"++StrCmd),
             case erlang:function_exported(?MODULE, Cmd, 1) of
@@ -36,6 +38,7 @@ cmd_help(_Args) ->
         "Usage: erlduce <command> [options ...] [args ...]~n~n",
         "Commands are:~n",
         "  dist~n",
+        "  fs~n",
         "  run~n",
         "  start~n"
         "  stop~n",
@@ -47,15 +50,20 @@ cmd_help(_Args) ->
 
 cmd_dist(Args) ->
     {_, Files0} = erlduce_utils:getopts([], Args, [], 0, infinity, "erlduce dist", "Distribute files across cluster"),
-    Files = lists:foldl(fun(File, Acc)->
+    Files1 = lists:foldl(fun(File, Acc)->
         Abs = filename:absname(File),
         case file:read_file(File) of
-            {ok,Bytes} -> [{Abs, Bytes}|Acc];
+            {ok,Bytes} -> [{file, Abs, Bytes}|Acc];
             {error, Reason} ->
                 io:fwrite(standard_error,"error: ~p: ~p~n",[File,Reason]),
                 Acc
         end
     end, [], Files0),
+    Files = lists:foldl(fun(App, Acc)->
+        {ok, Dir} = application:get_env(App, dir),
+        [{directory, filename:absname(Dir)}|Acc]
+    end, Files1, [erlduce,edfs,mnesia]),
+
     Localhost = erlduce_utils:host(),
     Name = new_job_id(dist),
     {ok, Resources} = application:get_env(erlduce,hosts),
@@ -68,16 +76,22 @@ cmd_dist(Args) ->
         ({error,Reason},Acc) -> io:fwrite(standard_error,"error: ~p",[Reason]), Acc
     end, [], Slaves0),
     erlduce_utils:pmap(fun(Node)->
-        lists:foreach(fun({Path,Bytes})->
-            rpc:call(Node, os, cmd, ["mkdir -p '"++filename:dirname(Path)++"'"]),
-            case rpc:call(Node, prim_file, write_file, [Path,Bytes]) of
-                ok -> ok;
-                {error, Reason} ->
-                    io:fwrite(standard_error,"error: ~p[~p]: ~p~n",[Path,Node,Reason])
-            end
+        lists:foreach(fun
+            ({directory,Path}) -> rpc:call(Node, os, cmd, ["mkdir -p '"++Path++"'"]);
+            ({file,Path,Bytes})->
+                rpc:call(Node, os, cmd, ["mkdir -p '"++filename:dirname(Path)++"'"]),
+                case rpc:call(Node, prim_file, write_file, [Path,Bytes]) of
+                    ok -> ok;
+                    {error, Reason} ->
+                        io:fwrite(standard_error,"error: ~p[~p]: ~p~n",[Path,Node,Reason])
+                end
         end, Files)
     end, Slaves),
     halt(0).
+
+
+cmd_fs(Args) ->
+    edfs_cli:cmd(Args).
 
 
 cmd_run(Args) ->

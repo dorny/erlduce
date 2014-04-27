@@ -19,7 +19,6 @@
 
 
 cmd(Args) ->
-    application:load(edfs),
     case Args of
         [StrCmd | TArgs] ->
             Cmd = list_to_atom("cmd_"++StrCmd),
