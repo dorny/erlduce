@@ -124,7 +124,8 @@ handle_call( {get_next_hosts,_N, _H}, _From, State=#state{queue=[]}) ->
 handle_call( {get_next_hosts, N, PrefHost}, _From, State=#state{queue=Nodes0}) ->
     PrefNode = erlduce_utils:node(edfs_slave,PrefHost),
     Nodes = case lists:member(PrefNode, Nodes0) of
-        true -> [PrefNode | lists:delete(PrefNode, Nodes0) ]
+        true -> [PrefNode | lists:delete(PrefNode, Nodes0) ];
+        false -> Nodes0
     end,
     MaxN = min(N, length(Nodes)),
     {Dest, Rest} = lists:split(MaxN, Nodes),
