@@ -26,6 +26,7 @@ if [ -z "$1" ] || [ "$1" == "start" ]; then
 else
     erl \
         -pa $EBIN_PATHS \
+        -rsh ssh \
         -noshell \
         -sname "erlduce-cmd-$$" \
         -config "$ERLDUCE_CONFIG" \
