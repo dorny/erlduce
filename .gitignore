@@ -1,5 +1,6 @@
 apps/*/ebin
 deps/*/ebin
+examples/*/ebin
 log
 erlduce.config
 erl_crash.dump
