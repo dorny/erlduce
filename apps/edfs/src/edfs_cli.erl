@@ -64,13 +64,15 @@ cmd_cat(Args) ->
             {error, Reason} ->
                 erlduce_utils:cli_die("~p",[Reason])
         end
-    || Path <- Paths].
+    || Path <- Paths],
+    halt().
 
 
 cmd_format(Args) ->
     erlduce_utils:getopts([], Args, [], 0, 0, "edfs format","\nFormat EDFS storage"),
     erlduce_cli:ensure_connect(),
-    edfs:format().
+    edfs:format(),
+    halt().
 
 
 cmd_import(Args) ->
@@ -90,7 +92,7 @@ cmd_import(Args) ->
     {SrcPaths, [Dest]} = lists:split(length(Paths)-1, Paths),
     erlduce_cli:ensure_connect(),
     [ p_import(Src,Dest, Opts) || Src <- SrcPaths ],
-    ok.
+    halt().
 
 
 cmd_ls(Args) ->
@@ -107,8 +109,10 @@ cmd_ls(Args) ->
         {ok, Listing} ->
             p_print_ls(Listing, ListOpt),
             ok;
-        Error -> {error, {Path,Error}}
-    end || Path <- Paths2].
+        {error,Reason} ->
+            io:fwrite(standard_error,"error: ~p: ~p~n",[Path,Reason])
+    end || Path <- Paths2],
+    halt().
 
 
 cmd_mkdir(Args) ->
@@ -117,8 +121,10 @@ cmd_mkdir(Args) ->
     erlduce_cli:ensure_connect(),
     [ case edfs:mkdir(Path) of
         {ok, _Inode} -> ok;
-        Error -> {error, {Path,Error}}
-    end || Path <- Paths].
+        {error,Reason} ->
+            io:fwrite(standard_error,"error: ~p: ~p~n",[Path,Reason])
+    end || Path <- Paths],
+    halt().
 
 
 cmd_mkfile(Args) ->
@@ -126,14 +132,21 @@ cmd_mkfile(Args) ->
     erlduce_cli:ensure_connect(),
     [ case edfs:mkfile(Path) of
         {ok, _Inode} -> ok;
-        Error -> {error, {Path,Error}}
-    end || Path <- Paths].
+        {error,Reason} ->
+            io:fwrite(standard_error,"error: ~p: ~p~n",[Path,Reason])
+    end || Path <- Paths],
+    halt().
 
 
 cmd_rm(Args) ->
     {_, Paths} = erlduce_utils:getopts([], Args, [], 1, infinity, "edfs rm", "[FILE ...]\nRemove FILE(s)"),
     erlduce_cli:ensure_connect(),
-    [ edfs:rm(Path) || Path <- Paths ].
+    [case edfs:rm(Path) of
+        ok -> ok;
+        {error,Reason} ->
+            io:fwrite(standard_error,"error: ~p: ~p~n",[Path,Reason])
+    end || Path <- Paths ],
+    halt().
 
 
 %% ===================================================================
