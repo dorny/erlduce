@@ -129,8 +129,10 @@ handle_cast( _Msg, State) ->
 
 
 handle_info( {'EXIT', From, Reason}, State) ->
-    {stop, {error, {From,Reason}}, State};
-
+    case Reason of
+        normal -> {noreply, State};
+        _      -> {stop, {error, {From,Reason}}, State}
+    end;
 handle_info( _Info, State) ->
     {noreply, State}.
 

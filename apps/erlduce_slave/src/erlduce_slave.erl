@@ -109,13 +109,12 @@ handle_call( {run,Slaves}, _From, State=#state{master=Master, job_id=JobID }) ->
     MemThreshold = MemThreshold0 * LocalCount,
     {reply, ok, State#state{ task_index=TaskIndex, slaves=Slaves, dir=Dir, mem_threshold=MemThreshold }};
 
-handle_call( done, _From, State=#state{ files=[], output=Output, task_index=Idx }) ->
-    Items = p_get_items(),
-    Arg = Output(open,Idx),
-    Output(close, Output(Items,Arg)),
+handle_call( done, _From, State=#state{ files=[], task_index=Idx, reduce=Reduce, output=Output }) ->
+    p_reduce_mem(Idx, Reduce, Output),
     {stop, normal, ok, State};
 
-handle_call( done, _From, State=#state{ files=Files, output=Output, task_index=Idx }) ->
+handle_call( done, _From, State=#state{ files=_Files, output=_Output, task_index=_Idx }) ->
+    exit({error,not_impl}),
     {stop, normal, ok, State};
 
 handle_call( _Request, _From, State) ->
@@ -131,7 +130,7 @@ handle_cast( {input, eof}, State=#state{ dir=Dir, files=Files, sem=Sem}) ->
             erlduce_utils:sem_signal(Sem),
             State#state{ files=[File|Files] }
     end,
-    {noreply, State};
+    {noreply, State2};
 handle_cast( {input, Blob}, State=#state{ master=Master, slaves=Slaves, sem=Sem, write=Write, map=Map, partition=Part }) ->
     spawn_link(?MODULE, p_map_worker, [self(),Master,Blob,Slaves,Sem,Write,Map,Part]),
     {noreply, State};
@@ -172,24 +171,32 @@ code_change(_OldVsn, State, _Extra) ->
 %% PRIVATE
 %% ===================================================================
 
+p_list_index(E, L) -> p_list_index(E,L,0).
+p_list_index(E, [E|_T], Pos) -> Pos;
+p_list_index(E, [_|T], Pos) -> p_list_index(E,T,Pos+1);
+p_list_index(_E, [], _Pos) -> false.
+
 p_write_fun(undefined) ->
+    p_write_acc_fun();
+p_write_fun(Combine) when is_function(Combine) ->
+    p_write_combine_fun(Combine).
+
+p_write_acc_fun() ->
     fun({K,V})->
         case get(K) of
             undefined -> put(K,[V]);
             L -> put(K, [V|L])
-        end
-    end;
-p_write_fun(Combine) when is_function(Combine) ->
+        end,
+        p_write_acc_fun()
+    end.
+p_write_combine_fun(Combine) ->
     fun({K,V})->
         case get(K) of
             undefined -> put(K,V);
             Old -> put(K, Combine(K, V, Old))
-        end
+        end,
+        p_write_combine_fun(Combine)
     end.
-
-
-p_get_items() ->
-    lists:keysort(1, erlang:erase()).
 
 
 p_map_worker(Slave, Master, {BlobID, Path, Hosts}, Slaves, Sem, Write, Map, Part) ->
@@ -203,31 +210,66 @@ p_map_worker(Slave, Master, {BlobID, Path, Hosts}, Slaves, Sem, Write, Map, Part
             erlduce_utils:sem_signal(Sem),
             p_combine_worker_dispatch(BlobID, Items, Slaves, Part);
         Error ->
-            lager:error("Failed to read blob: ~p",[Error])
+            exit({error,{BlobID, Error}})
     end.
 p_combine_worker_dispatch(BlobID, Items, Slaves, Partition) ->
     Len = length(Slaves),
     Acc0 = array:new(Len, [{default, []}]),
-    Buf0 = lists:foldl(fun(Rec={K,V},Acc)->
+    Buf0 = lists:foldl(fun(Rec={K,_V},Acc)->
         I = Partition(K) rem Len,
         L = array:get(I, Acc),
         array:set(I, [Rec|L], Acc)
     end, Acc0, Items),
     Buf = lists:zip(Slaves,array:to_list(Buf0)),
-    erlduce_utils:pmap(fun({Pid,Items})->
-        erlduce_slave:merge(Pid, BlobID, Items)
+    erlduce_utils:pmap(fun({Pid,Data})->
+        erlduce_slave:merge(Pid, BlobID, Data)
     end, Buf),
     ok.
 
 
 p_flush_to_disk(Dir, Idx) ->
-    Buf = p_get_items(),
+    Buf = lists:keysort(1, erase()),
     File = filename:join(Dir, integer_to_list(Idx)),
-    ok=prim_file:write_file(File, term_to_binary(Buf)),
+    {ok, IoDev} = file:open(File, [write,raw,binary,delayed_write]),
+    [erlduce_utils:file_write_record(IoDev,Item) || Item <- Buf],
+    file:close(IoDev),
     File.
 
 
-p_list_index(E, L) -> p_list_index(E,L,0).
-p_list_index(E, [E|T], Pos) -> Pos;
-p_list_index(E, [_|T], Pos) -> p_list_index(E,T,Pos+1);
-p_list_index(E, [], Pos) -> false.
+p_reduce_mem(Idx,Reduce,Output) ->
+    Items = case Reduce of
+        undefined ->
+            erlang:erase();
+        Fun when is_function(Fun) ->
+            lists:flatmap(fun({Key,Values}) -> Fun(Key,Values) end, erlang:erase())
+    end,
+    Sorted = lists:keysort(1,Items),
+    Output2 = lists:foldl( fun(Item,Fun) ->
+        Fun(Item)
+    end, Output({open,Idx}), Sorted),
+    Output2(close),
+    ok.
+
+
+
+% p_combine_files(Files, Combine, OutFun) ->
+%     % Fun = Output({open, Idx}),
+%     erlduce_utils:merge_files(Files, p_combine_files_fun(Combine,OutFun)),
+%     ok.
+
+p_combine_files_fun(Combine,Output) ->
+    fun ({Key,[H|T]})->
+            Value=lists:foldl(fun(Val,Acc)-> Combine(Key,Val,Acc) end, H, T),
+            Output2 = Output({Key,Value}),
+            p_combine_files_fun(Combine,Output2);
+        (close) ->
+            Output(close)
+    end.
+
+p_reduce_files_fun(Reduce, Output) ->
+    fun ({Key,Values})->
+            Output2 = Reduce(Key,Values,Output),
+            p_combine_files_fun(Reduce,Output2);
+        (close) ->
+            Output(close)
+    end.

@@ -138,7 +138,7 @@ write(Path, Bytes, ReplicasOrHosts) ->
         {ok, Inode} -> write(Inode, Bytes, ReplicasOrHosts);
         Error -> Error
     end.
-write2(Inode, Bytes, Replicas) when is_integer(Inode), is_binary(Bytes), is_integer(Replicas) ->
+write2(Inode, Bytes, Replicas) when is_integer(Inode), is_integer(Replicas) ->
     case edfs_master:mkblob(Inode, iolist_size(Bytes), Replicas) of
         {ok, Blob} -> edfs_slave:write(Blob, Bytes);
         Error -> Error

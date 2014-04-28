@@ -26,6 +26,10 @@
     mkdirp/1,
     rmdir/1,
 
+    merge_files/2,
+    file_write_record/2,
+    file_read_record/1,
+
     encode/1,
     encode/2,
     encode/3,
@@ -221,6 +225,89 @@ rmdir(Path) ->
 code_load_modules(Modules) ->
     lists:foreach(fun({Mod, Bin, Fn})-> {module, _Mod} = code:load_binary(Mod, Fn, Bin) end, Modules),
     ok.
+
+
+
+merge_files([], Fun) -> Fun;
+merge_files(Files, Fun) ->
+    Queue = lists:foldl(fun(File,Acc)->
+        case file:open(File, [read,raw,binary,read_ahead]) of
+            {ok, Fd} ->
+                case file_read_record(Fd) of
+                    eof -> Acc;
+                    {ok, KV} -> [{KV,Fd}| Acc];
+                    Error -> exit(Error)
+                end;
+            Error -> exit(Error)
+        end
+    end, [], Files),
+    p_merge_files_loop(Queue,Fun).
+
+p_merge_files_loop(Queue, Fun) ->
+    Key = p_merge_files_next_key(Queue),
+    p_merge_files_loop(Key,Queue, Fun).
+p_merge_files_loop(Key, Queue, Fun) ->
+    {Queue2, Vals} = p_merge_files_read_round(Key,Queue),
+    Fun2 = Fun({Key,Vals}),
+    case Queue2 of
+        [] -> Fun2;
+        _ ->
+            Key2 = p_merge_files_next_key(Queue2),
+            p_merge_files_loop(Key2,Queue2, Fun2)
+    end.
+
+p_merge_files_next_key([{{K,_V},_}|T]) ->
+    p_merge_files_next_key(T,K).
+p_merge_files_next_key([{{K,_V},_}|T], Min) ->
+    if
+        K<Min -> p_merge_files_next_key(T,K);
+        true -> p_merge_files_next_key(T,Min)
+    end;
+p_merge_files_next_key([], Min) ->
+    Min.
+
+p_merge_files_read_round(Key,Queue) ->
+    lists:foldl(fun
+        ({{Key,Val}, Fd}, {OutQ,Vals})->
+            case p_merge_files_read_records(Key,Fd,[Val|Vals]) of
+                {eof, NewVals} ->
+                    file:close(Fd),
+                    {OutQ, NewVals};
+                {KVF, NewVals} ->
+                    {[KVF|OutQ], NewVals}
+            end;
+        (KVF, {OutQ,Vals}) ->
+            {[KVF|OutQ], Vals}
+    end, {[], []}, Queue).
+p_merge_files_read_records(Key, Fd, Acc) ->
+    case file_read_record(Fd) of
+        {ok, {Key,Val}} ->
+            p_merge_files_read_records(Key,Fd,[Val|Acc]);
+        {ok, KV} ->
+            {{KV, Fd}, Acc};
+        eof ->
+            {eof, Acc}
+    end.
+
+
+
+file_write_record(IoDevice, Term) ->
+    B = erlang:term_to_binary(Term),
+    Len = size(B),
+    file:write(IoDevice, <<Len:32, B/binary>>).
+
+file_read_record(IoDevice) ->
+    case file:read(IoDevice, 4) of
+        {ok,<<Len:32>>} ->
+            case file:read(IoDevice, Len) of
+                {ok, B} -> {ok, binary_to_term(B)};
+                eof -> exit({error, premature_eof})
+            end;
+        eof -> eof
+    end.
+
+
+
 
 
 encode(Term) ->

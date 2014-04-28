@@ -8,7 +8,6 @@
 
 
 
-
 start(RunID, Slaves, Args=[Src, Dest]) ->
 
     erlduce_utils:start_application(lager),
@@ -20,13 +19,12 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         "args:   ~p~n~n"
     ]),[RunID, ?MODULE, Slaves, Args]),
 
-    TmpDir = "/tmp/tf-idf",
+    TmpDir = "/tmp/tfidf",
     OutDir1 = filename:join(TmpDir, "stage-1"),
     OutDir2 = filename:join(TmpDir, "stage-2"),
 
     ok = edfs:rm(TmpDir),
     ok = edfs:rm(Dest),
-
     edfs:mkdir(TmpDir),
     edfs:mkdir(OutDir1),
     edfs:mkdir(OutDir2),
@@ -43,7 +41,7 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         {combine, fun(_Key, A,B) ->
             A+B
         end},
-        {output, edfs_lib:iter_write_file(OutDir1, fun erlang:term_to_binary/1, 1)}
+        {output, edfs_lib:iter_write_list(100000, OutDir1, 1, fun erlang:term_to_binary/1)}
     ]),
     erlduce_job:wait(Pid),
 
@@ -54,9 +52,11 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
     %         [ Write({DocID, {Word, WordCount}}) ||  {{Word,DocID}, WordCount} <- List],
     %         ok
     %     end},
-    %     {reduce, fun(DocID, Values, Write)->
+    %     {reduce, fun(DocID, Values, Write0)->
     %         WordsInDoc = lists:foldl(fun({_Word,WordCount}, Sum)-> WordCount+Sum end, 0, Values),
-    %         [ Write({{Word, DocID}, {WordCount, WordsInDoc}}) ||  {Word, WordCount} <- Values].
+    %         lists:foldl(fun({Word, WordCount}, Write)->
+    %             Write({{Word, DocID}, {WordCount, WordsInDoc}})
+    %         end, Write0, Values)
     %     end},
     %     {output, edfs_lib:iter_write_file("/tmp/tf-idf/2/part", erlang:term_to_binary/1, 1)}
     % ]),
@@ -72,7 +72,7 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
     %         FreqInCorpus = length(Values),
     %         Docs = [ {DocID, tdidf(WordCount, WordsInDoc, TotalDocs, FreqInCorpus)} || {DocID, WordCount, WordsInDoc}  <- Values],
     %         Sorted = lists:keysort(2, Docs),
-    %         Write({Word,Sorted}).
+    %         [{Word,Sorted}].
     %     end},
     %     {output, edfs_lib:iter_write_file("/tmp/tf-idf/3/part", erlang:term_to_binary/1, 1)}
     % ]),

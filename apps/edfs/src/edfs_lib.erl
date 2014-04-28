@@ -5,7 +5,7 @@
 -export([
     read_file/3,
     split/3,
-    iter_write_file/3
+    iter_write_list/4
 ]).
 
 
@@ -80,16 +80,32 @@ read_lines(IoDev, Number, Acc) ->
 
 
 
-iter_write_file(Path, Encode, Replicas) ->
+iter_write_list(Len, Path, Replicas, Encode) ->
+    fun({open, TaskIndex}) ->
+        File = filename:join(Path,integer_to_list(TaskIndex)),
+        {ok, Inode} = edfs:mkfile(File),
+        iter_write_list(Len-1, Inode, Replicas, Encode, [], 0)
+    end.
+iter_write_list(Len, Inode, Replicas, Encode, Acc, AccLen) ->
     fun
-        (open, TaskIndex) ->
-            File = filename:join(Path,integer_to_list(TaskIndex)),
-            {ok, Inode} = edfs:mkfile(File),
-            Inode;
-        (close, _Inode) ->
-            ok;
-        (Terms, Inode) ->
-            Bytes = Encode(Terms),
-            edfs:write(Inode, Bytes, Replicas),
-            Inode
+        (close) ->
+            case AccLen of
+                0 -> ok;
+                _ ->
+                    Bytes = Encode(Acc),
+                    case edfs:write(Inode, Bytes, Replicas) of
+                        ok -> ok;
+                        Error -> exit(Error)
+                    end
+            end;
+
+        (Item) when AccLen<Len ->
+            iter_write_list(Len, Inode, Replicas, Encode, [Item|Acc], AccLen+1);
+
+        (Item) ->
+            Bytes = Encode([Item|Acc]),
+            case edfs:write(Inode, Bytes, Replicas) of
+                ok -> iter_write_list(Len,Inode,Replicas,Encode,[],0);
+                Error -> exit(Error)
+            end
     end.
