@@ -7,6 +7,7 @@
 % public api
 -export([
     start_link/2,
+    stop/2,
     wait/1
 ]).
 
@@ -41,6 +42,9 @@ start_link(Nodes, JobSpec) ->
     gen_server:start_link(?MODULE, {Nodes, JobSpec}, []).
 
 
+stop(Pid, Reason) ->
+    gen_server:cast(Pid, {stop, Reason}).
+
 wait(Pid) ->
     gen_server:call(Pid, wait, infinity).
 
@@ -71,7 +75,7 @@ init({Nodes, JobSpec0}) ->
 
     SlaveLen = length(SlaveList),
     JobSpec1 = [{master, self()} | JobSpec0],
-    JobSpec = case lists:member(partition, JobSpec1) of
+    JobSpec = case lists:keymember(partition, 1, JobSpec1) of
         true -> JobSpec1;
         false -> [{partition, fun(X)-> erlang:phash2(X,SlaveLen) end} | JobSpec1]
     end,
@@ -104,21 +108,26 @@ handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
 
 
-handle_cast( {slave_ack_input,BlobID}, State=#state{ blobs_taken=BlobsTaken, slaves_count=Count}) ->
+handle_cast( {slave_ack_input,BlobID}, State=#state{ blobs_taken=BlobsTaken, slaves=Slaves, slaves_count=Count}) ->
     case ets:update_counter(BlobsTaken, BlobID, {2,1}) of
         Count ->
             ets:delete(BlobsTaken, BlobID),
-            p_check_is_done(State);
-        _ -> {noreply, State}
-    end;
-handle_cast( {slave_ack_input_all, BlobID}, State=#state{ blobs_taken=BlobsTaken}) ->
+            p_check_is_done(self(), BlobsTaken, Slaves);
+        _ -> ok
+    end,
+    {noreply, State};
+handle_cast( {slave_ack_input_all, BlobID}, State=#state{ blobs_taken=BlobsTaken, slaves=Slaves}) ->
     ets:delete(BlobsTaken, BlobID),
-    p_check_is_done(State);
+    p_check_is_done(self(), BlobsTaken, Slaves),
+    {noreply, State};
 
 
 handle_cast( {slave_req_input, Pid, Host}, State=#state{ blobs_queue=BlobsQueue, blobs_taken=BlobsTaken }) ->
     erlduce_slave:input(Pid,p_get_input(Host,BlobsQueue,BlobsTaken)),
     {noreply, State};
+
+handle_cast( {stop, Reason}, State) ->
+    {stop, Reason, State};
 
 handle_cast( _Msg, State) ->
     {noreply, State}.
@@ -135,7 +144,8 @@ handle_info( _Info, State) ->
 
 
 
-terminate( normal, State=#state{wait=Wait, slave_nodes=Nodes}) ->
+terminate( normal, State=#state{ wait=Wait }) ->
+    io:format("job terminate: ~p\n",[Wait]),
     erlduce_utils:pmap(fun(From)-> gen_server:reply(From, ok) end, Wait),
     ok;
 terminate( _Reason, State) ->
@@ -199,10 +209,12 @@ p_get_input_first(Tid) ->
     end.
 
 
-p_check_is_done(State=#state{ blobs_taken=BlobsTaken, slaves=Slaves}) ->
+p_check_is_done(Master, BlobsTaken, Slaves) ->
     case ets:info(BlobsTaken,size) of
         0 ->
-            erlduce_utils:pmap(fun(Pid) -> erlduce_slave:done(Pid) end, Slaves),
-            {stop, normal, State};
-        _ -> {noreply, State}
+            spawn_link(fun()->
+                erlduce_utils:pmap(fun(Pid) -> erlduce_slave:done(Pid) end, Slaves),
+                erlduce_job:stop(Master,normal)
+            end);
+        _ -> ok
     end.

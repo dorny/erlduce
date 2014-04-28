@@ -66,7 +66,7 @@ merge(Pid, BlobID, Items) ->
 
 
 done(Pid) ->
-    gen_server:call(Pid,done).
+    gen_server:call(Pid,done, infinity).
 
 %% ===================================================================
 %% GEN_SERVER
@@ -155,6 +155,7 @@ handle_cast( {merge, BlobID, Items}, State=#state{
         master=Master, write=Write, sem=Sem, mem_threshold=MemThreshold, dir=Dir, files=Files }) ->
     erlduce_utils:sem_wait(Sem),
     [Write(Item) || Item <- Items],
+    erlduce_utils:sem_signal(Sem),
     MemUsed = erlang:memory(total),
     State2 = if
         MemUsed > MemThreshold ->
@@ -162,7 +163,6 @@ handle_cast( {merge, BlobID, Items}, State=#state{
             State#state{ files=[File|Files] };
         true -> State
     end,
-    erlduce_utils:sem_signal(Sem),
     erlduce_job:slave_ack_input(Master,BlobID),
     {noreply,State2};
 
@@ -264,12 +264,16 @@ p_reduce_mem(Idx,Reduce,Output) ->
         Fun when is_function(Fun) ->
             lists:flatmap(fun({Key,Values}) -> Fun(Key,Values) end, erlang:erase())
     end,
-    Sorted = lists:keysort(1,Items),
-    Output2 = lists:foldl( fun(Item,Fun) ->
-        Fun(Item)
-    end, Output({open,Idx}), Sorted),
-    Output2(close),
-    ok.
+    case Items of
+        [] -> ok;
+        _ ->
+            Sorted = lists:keysort(1,Items),
+            Output2 = lists:foldl( fun(Item,Fun) ->
+                Fun(Item)
+            end, Output({open,Idx}), Sorted),
+            Output2(close),
+            ok
+    end.
 
 
 p_merge_files_fun(Combine,undefined,Output) when is_function(Combine) ->
