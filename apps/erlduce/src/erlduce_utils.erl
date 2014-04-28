@@ -25,6 +25,7 @@
 
     mkdirp/1,
     rmdir/1,
+    filename_join/1,
 
     encode/1,
     encode/2,
@@ -38,6 +39,8 @@
     format_size/1,
     parse_size/1
 ]).
+
+-include_lib("kernel/include/file.hrl").
 
 -type node_list_ok() :: list({Host::atom(), Node::atom()}).
 -type node_list_error() :: list({Host::atom(), Error::any()}).
@@ -200,10 +203,8 @@ mkdirp(Path) ->
     AbsPath = filename:absname(Path),
     lists:foldl(fun(Part,Prev)->
         Cur = filename:join(Prev, Part),
-        case prim_file:is_dir(Cur) of
-            true -> Cur;
-            false -> prim_file:make_dir(Cur), Cur
-        end
+        prim_file:make_dir(Cur),
+        Cur
     end, "", filename:split(AbsPath)).
 
 rmdir(Path) ->
@@ -214,6 +215,13 @@ rmdir(Path) ->
         _ ->
             prim_file:delete(Path)
     end.
+
+filename_join(Parts) ->
+    filename:join([filename_safe_arg(P) || P <- Parts]).
+filename_safe_arg(P) when is_integer(P) -> integer_to_list(P);
+filename_safe_arg(P) when is_atom(P) -> atom_to_list(P);
+filename_safe_arg(P) -> P.
+
 
 
 code_load_modules(Modules) ->

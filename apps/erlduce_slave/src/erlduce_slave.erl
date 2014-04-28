@@ -92,7 +92,7 @@ handle_call( {run,Slaves}, _From, State=#state{master=Master, job_id=JobID }) ->
     {RunID, JobIndex} = JobID,
     TaskIndex = p_list_index(self(),Slaves),
     {ok, BaseDir} = application:get_env(erlduce_slave, dir),
-    Dir = filename:join([BaseDir, RunID, JobIndex, TaskIndex]),
+    Dir = erlduce_utils:filename_join([BaseDir, RunID, JobIndex, TaskIndex]),
     erlduce_utils:mkdirp(Dir),
     erlduce_job:slave_req_input(Master, self()),
     {reply, ok, State#state{ task_index=TaskIndex, slaves=Slaves, dir=Dir }};
@@ -111,7 +111,16 @@ handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
 
 
-
+handle_cast( {input, eof}, State=#state{ dir=Dir, files=Files, sem=Sem}) ->
+    State2 = case Files of
+        [] -> State;
+        _ ->
+            erlduce_utils:sem_wait(Sem),
+            File = p_flush_to_disk(Dir, length(Files)),
+            erlduce_utils:sem_signal(Sem),
+            State#state{ files=[File|Files] }
+    end,
+    {noreply, State};
 handle_cast( {input, Blob}, State=#state{ master=Master, slaves=Slaves, sem=Sem, write=Write, map=Map, partition=Part }) ->
     spawn_link(?MODULE, p_map_worker, [self(),Master,Blob,Slaves,Sem,Write,Map,Part]),
     {noreply, State};
@@ -119,17 +128,15 @@ handle_cast( {input, Blob}, State=#state{ master=Master, slaves=Slaves, sem=Sem,
 handle_cast( {merge, BlobID, Items}, State=#state{
         master=Master, write=Write, sem=Sem, mem_threshold=MemThreshold, dir=Dir, files=Files }) ->
     erlduce_utils:sem_wait(Sem),
-    [Write(K,V) || {K,V} <- Items],
-    erlduce_utils:sem_signal(Sem),
+    [Write(Item) || Item <- Items],
     MemUsed = erlang:memory(total),
     State2 = if
         MemUsed > MemThreshold ->
-            Buf = p_get_items(),
-            File = filename:join(Dir, length(Files)),
-            ok=prim_file:write_file(File, term_to_binary(Buf)),
+            File = p_flush_to_disk(Dir, length(Files)),
             State#state{ files=[File|Files] };
         true -> State
     end,
+    erlduce_utils:sem_signal(Sem),
     erlduce_job:slave_ack_input(Master,BlobID),
     {noreply,State2};
 
@@ -154,14 +161,14 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 
 p_write_fun(undefined) ->
-    fun(K,V)->
+    fun({K,V})->
         case get(K) of
             undefined -> put(K,[V]);
             L -> put(K, [V|L])
         end
     end;
 p_write_fun(Combine) when is_function(Combine) ->
-    fun(K,V)->
+    fun({K,V})->
         case get(K) of
             undefined -> put(K,V);
             Old -> put(K, Combine(K, V, Old))
@@ -184,8 +191,7 @@ p_map_worker(Slave, Master, {BlobID, Path, Hosts}, Slaves, Sem, Write, Map, Part
             erlduce_utils:sem_signal(Sem),
             p_combine_worker_dispatch(BlobID, Items, Slaves, Part);
         Error ->
-            % TODO
-            Error
+            lager:error("Failed to read blob: ~p",[Error])
     end.
 p_combine_worker_dispatch(BlobID, Items, Slaves, Partition) ->
     Len = length(Slaves),
@@ -200,6 +206,14 @@ p_combine_worker_dispatch(BlobID, Items, Slaves, Partition) ->
         erlduce_slave:merge(Pid, BlobID, Items)
     end, Buf),
     ok.
+
+
+p_flush_to_disk(Dir, Idx) ->
+    Buf = p_get_items(),
+    File = filename:join(Dir, integer_to_list(Idx)),
+    ok=prim_file:write_file(File, term_to_binary(Buf)),
+    File.
+
 
 p_list_index(E, L) -> p_list_index(E,L,0).
 p_list_index(E, [E|T], Pos) -> Pos;

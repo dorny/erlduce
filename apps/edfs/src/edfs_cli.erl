@@ -15,7 +15,6 @@
 ]).
 
 -include("edfs.hrl").
--include_lib("kernel/include/file.hrl").
 
 
 cmd(Args) ->

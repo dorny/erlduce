@@ -31,16 +31,9 @@
     slave_nodes :: list(atom()),
     slaves_count :: integer(),
     wait = [] :: list(pid()),
-    blobs :: ets:tid(),
+    blobs_queue :: ets:tid(),
+    blobs_taken :: ets:tid(),
     dir :: string()
-}).
-
--record(blob, {
-    id :: term(),
-    path :: binary(),
-    hosts :: list(atom()),
-    taken = false :: boolean(),
-    ack = 0 :: integer()
 }).
 
 
@@ -68,28 +61,36 @@ init({Nodes, JobSpec0}) ->
 
     {RunID, JobIndex} = proplists:get_value(id, JobSpec0),
     {ok, BaseDir} = application:get_env(erlduce_slave, dir),
-    Dir = filename:join([BaseDir, RunID, JobIndex]),
+    Dir = erlduce_utils:filename_join([BaseDir, RunID, JobIndex]),
 
-    SlaveNodes = lists:foldl(fun({Node,Slots}, AccNodes)->
+    SlaveList = lists:foldl(fun({Node,Slots}, AccNodes)->
         lists:foldl(fun(_,Acc)-> [Node|Acc] end, AccNodes, lists:seq(1, Slots))
     end, [], Nodes),
 
-    JobSpec = [{master, self()} | JobSpec0],
+    SlaveLen = length(SlaveList),
+    JobSpec1 = [{master, self()} | JobSpec0],
+    JobSpec = case lists:member(partition, JobSpec1) of
+        true -> JobSpec1;
+        false -> [{partition, fun(X)-> erlang:phash2(X,SlaveLen) end} | JobSpec1]
+    end,
+
     Slaves = erlduce_utils:pmap(fun(Node)->
         {ok, Pid} = erlduce_slave:start_link(Node,JobSpec),
         Pid
-    end, SlaveNodes),
+    end, SlaveList),
     erlduce_utils:pmap(fun(Pid) -> ok=erlduce_slave:run(Pid,Slaves) end, Slaves),
 
-    BlobsTid = ets:new(blobs,[set,{keypos, #blob.id}]),
+    BlobsQueue = ets:new(blobs_queue,[set]),
+    BlobsTaken = ets:new(blobs_taken,[set]),
     Blobs = p_prepare_input(proplists:get_value(input, JobSpec)),
-    ets:insert(BlobsTid,Blobs),
+    ets:insert(BlobsQueue,Blobs),
 
     {ok, #state{
         slaves = Slaves,
-        slave_nodes = Nodes,
-        slaves_count = length(Slaves),
-        blobs = BlobsTid,
+        slave_nodes = SlaveList,
+        slaves_count = SlaveLen,
+        blobs_queue = BlobsQueue,
+        blobs_taken = BlobsTaken,
         dir = Dir
     }}.
 
@@ -102,12 +103,12 @@ handle_call( _Request, _From, State) ->
 
 
 handle_cast( {slave_ack_input,BlobID},
-        State=#state{ blobs=Tid, slaves=Slaves, slave_nodes=Nodes, slaves_count=Count, wait=Wait, dir=Dir }) ->
-    End = case ets:update_counter(Tid, BlobID, {#blob.ack, 1}) of
+        State=#state{ blobs_taken=BlobsTaken, slaves=Slaves, slave_nodes=Nodes, slaves_count=Count, wait=Wait, dir=Dir }) ->
+    End = case ets:update_counter(BlobsTaken, BlobID, {2,1}) of
         Count ->
-            ets:delete(Tid, BlobID),
-            case ets:first() of
-                '$end_of_table' -> true;
+            ets:delete(BlobsTaken, BlobID),
+            case ets:info(BlobsTaken,size) of
+                0 -> true;
                 _ -> false
             end;
         _ -> false
@@ -121,8 +122,8 @@ handle_cast( {slave_ack_input,BlobID},
         false -> {noreply, State}
     end;
 
-handle_cast( {slave_req_input, Pid, Host}, State=#state{blobs=BlobsTid}) ->
-    erlduce_slave:input(Pid,p_get_input(Host,BlobsTid)),
+handle_cast( {slave_req_input, Pid, Host}, State=#state{ blobs_queue=BlobsQueue, blobs_taken=BlobsTaken }) ->
+    erlduce_slave:input(Pid,p_get_input(Host,BlobsQueue,BlobsTaken)),
     {noreply, State};
 
 handle_cast( _Msg, State) ->
@@ -147,7 +148,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 p_prepare_input(InputFun) when is_function(InputFun) ->
     {ok,Blobs} = InputFun(),
-    lists:foldl(fun(Blob={BlobID, _Path, Hosts})->
+    lists:foreach(fun(Blob={BlobID, _Path, Hosts})->
         lists:foreach(fun(Host)->
             Key = {host, Host},
             case get(Key) of
@@ -156,32 +157,30 @@ p_prepare_input(InputFun) when is_function(InputFun) ->
             end
         end, Hosts)
     end, Blobs),
-    [ #blob{
-        id=BlobID,
-        path=Path,
-        hosts=Hosts
-    } || {BlobID, Path, Hosts} <- Blobs];
+    Blobs;
 p_prepare_input(_) -> exit({error, {input, badarg}}).
 
 
-p_get_input(Host,BlobsTid) ->
-    Blob = case get({host,Host}) of
-        undefined -> p_get_input_first(BlobsTid);
+p_get_input(Host,BlobsQueue,BlobsTaken) ->
+    Key = {host,Host},
+    Blob = case get(Key) of
+        undefined -> p_get_input_first(BlobsQueue);
         List ->
-            case p_get_input2(List, BlobsTid) of
-                {[], B} -> B;
-                {T, B} -> put({host,Host},T), B
+            case p_get_input2(List, BlobsQueue) of
+                {[], B} -> erase(Key), B;
+                {T, B} -> put(Key,T), B
             end
     end,
     case Blob of
         eof -> eof;
-        #blob{id=BlobID, path=Path, hosts=Hosts} ->
-            true=ets:update_element(BlobsTid, BlobID, {#blob.taken, true}),
-            {BlobID, Path, Hosts}
-    end.
+        {BlobID,_,_} ->
+            ets:delete(BlobsQueue, BlobID),
+            ets:insert(BlobsTaken, {BlobID,0})
+    end,
+    Blob.
 p_get_input2([BlobID | T], Tid) ->
     case ets:lookup(Tid, BlobID) of
-        [Blob=#blob{taken=false}] -> {T,Blob};
+        [Blob] -> {T,Blob};
         _ -> p_get_input2(T, Tid)
     end;
 p_get_input2(T=[], Tid) ->
@@ -190,6 +189,6 @@ p_get_input_first(Tid) ->
     case ets:first(Tid) of
         '$end_of_table' -> eof;
         Key ->
-            [Blob] = ets:lookup(Key),
+            [Blob] = ets:lookup(Tid,Key),
             Blob
     end.

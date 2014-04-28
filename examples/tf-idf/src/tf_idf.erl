@@ -17,9 +17,9 @@ run(RunID, Slaves, Args=[Src, Dest]) ->
         "args:   ~p~n~n"
     ]),[RunID, ?MODULE, Slaves, Args]),
 
-    TmpDir = filename:join("/tmp", RunID),
-    OutDir1 = filename:join(TmpDir, "1"),
-    OutDir2 = filename:join(TmpDir, "2"),
+    TmpDir = "/tmp/tf-idf",
+    OutDir1 = filename:join(TmpDir, "stage-1"),
+    OutDir2 = filename:join(TmpDir, "stage-2"),
 
     ok = edfs:rm(TmpDir),
     ok = edfs:rm(Dest),
@@ -40,7 +40,7 @@ run(RunID, Slaves, Args=[Src, Dest]) ->
         {combine, fun(_Key, A,B) ->
             A+B
         end},
-        {output, edfs_lib:iter_write_file("/tmp/tf-idf/1/part", fun erlang:term_to_binary/1, 1)}
+        {output, edfs_lib:iter_write_file(OutDir1, fun erlang:term_to_binary/1, 1)}
     ]),
     erlduce_job:wait(Pid),
 

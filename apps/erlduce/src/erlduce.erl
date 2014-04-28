@@ -39,6 +39,7 @@ stop() ->
 
 
 run(RunID, Start, Modules, DriverArgs) when is_atom(RunID), is_atom(Start), is_list(Modules), is_list(DriverArgs) ->
+    application:load(erlduce_slave),
     case erlduce_master:run_slaves(RunID) of
         {ok, []} -> {error, no_slots};
         {ok, Slaves} ->
