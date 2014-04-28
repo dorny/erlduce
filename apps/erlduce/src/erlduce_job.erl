@@ -13,7 +13,8 @@
 % internal mapred
 -export([
     slave_req_input/2,
-    slave_ack_input/2
+    slave_ack_input/2,
+    slave_ack_input_all/2
 ]).
 
 %% gen_server.
@@ -50,6 +51,9 @@ slave_req_input(Pid, From) ->
 
 slave_ack_input(Pid, BlobID) ->
     gen_server:cast(Pid, {slave_ack_input, BlobID}).
+
+slave_ack_input_all(Pid, BlobID) ->
+    gen_server:cast(Pid, {slave_ack_input_all, BlobID}).
 
 
 %% ===================================================================
@@ -100,24 +104,17 @@ handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
 
 
-
-handle_cast( {slave_ack_input,BlobID},
-        State=#state{ blobs_taken=BlobsTaken, slaves=Slaves, slaves_count=Count, wait=Wait }) ->
-    End = case ets:update_counter(BlobsTaken, BlobID, {2,1}) of
+handle_cast( {slave_ack_input,BlobID}, State=#state{ blobs_taken=BlobsTaken, slaves_count=Count}) ->
+    case ets:update_counter(BlobsTaken, BlobID, {2,1}) of
         Count ->
             ets:delete(BlobsTaken, BlobID),
-            case ets:info(BlobsTaken,size) of
-                0 -> true;
-                _ -> false
-            end;
-        _ -> false
-    end,
-    case End of
-        true ->
-            erlduce_utils:pmap(fun(Pid) -> erlduce_slave:done(Pid) end, Slaves),
-            {stop, normal, State};
-        false -> {noreply, State}
+            p_check_is_done(State);
+        _ -> {noreply, State}
     end;
+handle_cast( {slave_ack_input_all, BlobID}, State=#state{ blobs_taken=BlobsTaken}) ->
+    ets:delete(BlobsTaken, BlobID),
+    p_check_is_done(State);
+
 
 handle_cast( {slave_req_input, Pid, Host}, State=#state{ blobs_queue=BlobsQueue, blobs_taken=BlobsTaken }) ->
     erlduce_slave:input(Pid,p_get_input(Host,BlobsQueue,BlobsTaken)),
@@ -199,4 +196,13 @@ p_get_input_first(Tid) ->
         Key ->
             [Blob] = ets:lookup(Tid,Key),
             Blob
+    end.
+
+
+p_check_is_done(State=#state{ blobs_taken=BlobsTaken, slaves=Slaves}) ->
+    case ets:info(BlobsTaken,size) of
+        0 ->
+            erlduce_utils:pmap(fun(Pid) -> erlduce_slave:done(Pid) end, Slaves),
+            {stop, normal, State};
+        _ -> {noreply, State}
     end.

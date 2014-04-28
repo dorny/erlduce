@@ -92,7 +92,7 @@ iter_write_list(Len, Inode, Replicas, Encode, Acc, AccLen) ->
             case AccLen of
                 0 -> ok;
                 _ ->
-                    Bytes = Encode(Acc),
+                    Bytes = Encode(lists:reverse(Acc)),
                     case edfs:write(Inode, Bytes, Replicas) of
                         ok -> ok;
                         Error -> exit(Error)
@@ -103,7 +103,7 @@ iter_write_list(Len, Inode, Replicas, Encode, Acc, AccLen) ->
             iter_write_list(Len, Inode, Replicas, Encode, [Item|Acc], AccLen+1);
 
         (Item) ->
-            Bytes = Encode([Item|Acc]),
+            Bytes = Encode(lists:reverse([Item|Acc])),
             case edfs:write(Inode, Bytes, Replicas) of
                 ok -> iter_write_list(Len,Inode,Replicas,Encode,[],0);
                 Error -> exit(Error)

@@ -35,8 +35,9 @@
     task_index = undefined :: integer(),
 
     map :: function(),
-    reduce :: function(),
-    partition :: function(),
+    combine :: function() | undefined,
+    reduce :: function() | undefined,
+    partition :: function() | undefined,
     output :: function(),
     write :: function(),
 
@@ -74,15 +75,21 @@ done(Pid) ->
 init(JobSpec) ->
     Master = proplists:get_value(master, JobSpec),
     link(Master),
+
+    Combine = proplists:get_value(combine, JobSpec),
+    Reduce = proplists:get_value(reduce, JobSpec),
+    Write = p_write_fun(Combine,Reduce),
+
     erase(),
     {ok, #state{
         master = Master,
         job_id = proplists:get_value(id, JobSpec),
         map = proplists:get_value(map, JobSpec),
-        reduce = proplists:get_value(reduce, JobSpec),
+        combine = Combine,
+        reduce = Reduce,
+        write = Write,
         partition = proplists:get_value(partition, JobSpec),
         output = proplists:get_value(output, JobSpec),
-        write = p_write_fun(proplists:get_value(combine, JobSpec)),
         sem = erlduce_utils:sem_new(1)
     }}.
 
@@ -109,12 +116,21 @@ handle_call( {run,Slaves}, _From, State=#state{master=Master, job_id=JobID }) ->
     MemThreshold = MemThreshold0 * LocalCount,
     {reply, ok, State#state{ task_index=TaskIndex, slaves=Slaves, dir=Dir, mem_threshold=MemThreshold }};
 
+% MAP-ONLY
+handle_call( done, _From, State=#state{ write=undefined }) ->
+    {stop, normal, ok, State};
+
+% Combine or Reduce in Memory
 handle_call( done, _From, State=#state{ files=[], task_index=Idx, reduce=Reduce, output=Output }) ->
     p_reduce_mem(Idx, Reduce, Output),
     {stop, normal, ok, State};
 
-handle_call( done, _From, State=#state{ files=_Files, output=_Output, task_index=_Idx }) ->
-    exit({error,not_impl}),
+% Combine or Reduce on Files
+handle_call( done, _From, State=#state{ dir=Dir, files=Files0, combine=Combine, reduce=Reduce, output=Output, task_index=Idx }) ->
+    Files = [ p_flush_to_disk(Dir, length(Files0)) | Files0],
+    Fun = p_merge_files_fun( Combine, Reduce, Output({open, Idx})),
+    Fun2 = erlduce_utils:merge_files(Files, Fun),
+    Fun2(close),
     {stop, normal, ok, State};
 
 handle_call( _Request, _From, State) ->
@@ -176,9 +192,11 @@ p_list_index(E, [E|_T], Pos) -> Pos;
 p_list_index(E, [_|T], Pos) -> p_list_index(E,T,Pos+1);
 p_list_index(_E, [], _Pos) -> false.
 
-p_write_fun(undefined) ->
+p_write_fun(undefined,undefined) ->
+    undefined;
+p_write_fun(undefined,Reduce) when is_function(Reduce) ->
     p_write_acc_fun();
-p_write_fun(Combine) when is_function(Combine) ->
+p_write_fun(Combine,undefined) when is_function(Combine) ->
     p_write_combine_fun(Combine).
 
 p_write_acc_fun() ->
@@ -208,7 +226,10 @@ p_map_worker(Slave, Master, {BlobID, Path, Hosts}, Slaves, Sem, Write, Map, Part
             Map(Path,Bytes,Write),
             Items = erlang:erase(),
             erlduce_utils:sem_signal(Sem),
-            p_combine_worker_dispatch(BlobID, Items, Slaves, Part);
+            case Write of
+                undefined -> erlduce_job:slave_ack_input_all(Master, BlobID);
+                _ -> p_combine_worker_dispatch(BlobID, Items, Slaves, Part)
+            end;
         Error ->
             exit({error,{BlobID, Error}})
     end.
@@ -251,11 +272,10 @@ p_reduce_mem(Idx,Reduce,Output) ->
     ok.
 
 
-
-% p_combine_files(Files, Combine, OutFun) ->
-%     % Fun = Output({open, Idx}),
-%     erlduce_utils:merge_files(Files, p_combine_files_fun(Combine,OutFun)),
-%     ok.
+p_merge_files_fun(Combine,undefined,Output) when is_function(Combine) ->
+    p_combine_files_fun(Combine, Output);
+p_merge_files_fun(undefined,Reduce,Output) when is_function(Reduce) ->
+    p_reduce_files_fun(Reduce,Output).
 
 p_combine_files_fun(Combine,Output) ->
     fun ({Key,[H|T]})->
@@ -269,7 +289,7 @@ p_combine_files_fun(Combine,Output) ->
 p_reduce_files_fun(Reduce, Output) ->
     fun ({Key,Values})->
             Output2 = Reduce(Key,Values,Output),
-            p_combine_files_fun(Reduce,Output2);
+            p_reduce_files_fun(Reduce,Output2);
         (close) ->
             Output(close)
     end.

@@ -268,8 +268,8 @@ p_merge_files_next_key([], Min) ->
 
 p_merge_files_read_round(Key,Queue) ->
     lists:foldl(fun
-        ({{Key,Val}, Fd}, {OutQ,Vals})->
-            case p_merge_files_read_records(Key,Fd,[Val|Vals]) of
+        ({{K,V}, Fd}, {OutQ,Vals}) when K=:=Key ->
+            case p_merge_files_read_records(K,Fd,[V|Vals]) of
                 {eof, NewVals} ->
                     file:close(Fd),
                     {OutQ, NewVals};
