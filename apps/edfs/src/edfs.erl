@@ -97,7 +97,7 @@ p_input(Path) ->
         {ok, {Inode, regular}} ->
             case blobs(Inode) of
                 {ok, Blobs} ->
-                    {ok, [{Path, BlobID, Hosts} || {BlobID, Hosts} <- Blobs]};
+                    {ok, [{BlobID, Path, Hosts} || {BlobID, Hosts} <- Blobs]};
                 Error -> Error
             end;
         Error -> Error

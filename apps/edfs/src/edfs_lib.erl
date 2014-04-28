@@ -82,8 +82,8 @@ read_lines(IoDev, Number, Acc) ->
 
 iter_write_file(Path, Encode, Replicas) ->
     fun
-        (open, WorkerID) ->
-            File = [Path,"-",integer_to_list(WorkerID)],
+        (open, TaskIndex) ->
+            File = [Path,"-",integer_to_list(TaskIndex)],
             {ok, Inode} = edfs:mkfile(File),
             Inode;
         (close, _Inode) ->

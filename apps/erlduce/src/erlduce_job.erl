@@ -12,7 +12,8 @@
 
 % internal mapred
 -export([
-    get_input/1
+    slave_req_input/2,
+    slave_ack_input/2
 ]).
 
 %% gen_server.
@@ -27,7 +28,19 @@
 
 -record(state, {
     slaves :: list(pid()),
-    wait = [] :: list(pid())
+    slave_nodes :: list(atom()),
+    slaves_count :: integer(),
+    wait = [] :: list(pid()),
+    blobs :: ets:tid(),
+    dir :: string()
+}).
+
+-record(blob, {
+    id :: term(),
+    path :: binary(),
+    hosts :: list(atom()),
+    taken = false :: boolean(),
+    ack = 0 :: integer()
 }).
 
 
@@ -39,33 +52,78 @@ wait(Pid) ->
     gen_server:call(Pid, wait, infinity).
 
 
-get_input(Pid) ->
-    gen_server:call(Pid, get_input, infinity).
+slave_req_input(Pid, From) ->
+    gen_server:cast(Pid, {slave_req_input, From, erlduce_utils:host()}).
+
+
+slave_ack_input(Pid, BlobID) ->
+    gen_server:cast(Pid, {slave_ack_input, BlobID}).
+
 
 %% ===================================================================
 %% GEN_SERVER
 %% ===================================================================
 
-init({Nodes, JobSpec}) ->
-    {Slaves,_} = lists:foldl(fun({Node,Slots},{Slaves, Sum})->
-        Slaves2 = lists:foldl(fun(S,Acc)-> [{Node,Sum+S} | Acc]  end, Slaves, lists:seq(1, Slots)),
-        {Slaves2, Sum+Slots}
-    end, {[],0}, Nodes),
+init({Nodes, JobSpec0}) ->
 
-    Master = self(),
-    SlavePids = erlduce_utils:pmap(fun(SlaveSpec)->
-        {ok, Pid} = erlduce_slave:start_link(Master, SlaveSpec, JobSpec), Pid
-    end, Slaves),
+    {RunID, JobIndex} = proplists:get_value(id, JobSpec0),
+    {ok, BaseDir} = application:get_env(erlduce_slave, dir),
+    Dir = filename:join([BaseDir, RunID, JobIndex]),
+
+    SlaveNodes = lists:foldl(fun({Node,Slots}, AccNodes)->
+        lists:foldl(fun(_,Acc)-> [Node|Acc] end, AccNodes, lists:seq(1, Slots))
+    end, [], Nodes),
+
+    JobSpec = [{master, self()} | JobSpec0],
+    Slaves = erlduce_utils:pmap(fun(Node)->
+        {ok, Pid} = erlduce_slave:start_link(Node,JobSpec),
+        Pid
+    end, SlaveNodes),
+    erlduce_utils:pmap(fun(Pid) -> ok=erlduce_slave:run(Pid,Slaves) end, Slaves),
+
+    BlobsTid = ets:new(blobs,[set,{keypos, #blob.id}]),
+    Blobs = p_prepare_input(proplists:get_value(input, JobSpec)),
+    ets:insert(BlobsTid,Blobs),
 
     {ok, #state{
-        slaves=SlavePids
+        slaves = Slaves,
+        slave_nodes = Nodes,
+        slaves_count = length(Slaves),
+        blobs = BlobsTid,
+        dir = Dir
     }}.
+
 
 handle_call( wait, From, State=#state{wait=Wait}) ->
     {noreply, State#state{ wait=[From|Wait] }};
 
 handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
+
+
+handle_cast( {slave_ack_input,BlobID},
+        State=#state{ blobs=Tid, slaves=Slaves, slave_nodes=Nodes, slaves_count=Count, wait=Wait, dir=Dir }) ->
+    End = case ets:update_counter(Tid, BlobID, {#blob.ack, 1}) of
+        Count ->
+            ets:delete(Tid, BlobID),
+            case ets:first() of
+                '$end_of_table' -> true;
+                _ -> false
+            end;
+        _ -> false
+    end,
+    case End of
+        true ->
+            erlduce_utils:pmap(fun(Pid) -> erlduce_slave:done(Pid) end, Slaves),
+            erlduce_utils:pmap(fun(Node) -> rpc:call(Node, erlduce_utils, rmdir, [Dir]) end, Nodes),
+            erlduce_utils:pmap(fun(From) -> gen_server:reply(From, ok) end, Wait),
+            {stop, State};
+        false -> {noreply, State}
+    end;
+
+handle_cast( {slave_req_input, Pid, Host}, State=#state{blobs=BlobsTid}) ->
+    erlduce_slave:input(Pid,p_get_input(Host,BlobsTid)),
+    {noreply, State};
 
 handle_cast( _Msg, State) ->
     {noreply, State}.
@@ -86,3 +144,52 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 %% PRIVATE
 %% ===================================================================
+
+p_prepare_input(InputFun) when is_function(InputFun) ->
+    {ok,Blobs} = InputFun(),
+    lists:foldl(fun(Blob={BlobID, _Path, Hosts})->
+        lists:foreach(fun(Host)->
+            Key = {host, Host},
+            case get(Key) of
+                undefined -> put(Key,[Blob]);
+                Acc -> put(Key, [BlobID | Acc])
+            end
+        end, Hosts)
+    end, Blobs),
+    [ #blob{
+        id=BlobID,
+        path=Path,
+        hosts=Hosts
+    } || {BlobID, Path, Hosts} <- Blobs];
+p_prepare_input(_) -> exit({error, {input, badarg}}).
+
+
+p_get_input(Host,BlobsTid) ->
+    Blob = case get({host,Host}) of
+        undefined -> p_get_input_first(BlobsTid);
+        List ->
+            case p_get_input2(List, BlobsTid) of
+                {[], B} -> B;
+                {T, B} -> put({host,Host},T), B
+            end
+    end,
+    case Blob of
+        eof -> eof;
+        #blob{id=BlobID, path=Path, hosts=Hosts} ->
+            true=ets:update_element(BlobsTid, BlobID, {#blob.taken, true}),
+            {BlobID, Path, Hosts}
+    end.
+p_get_input2([BlobID | T], Tid) ->
+    case ets:lookup(Tid, BlobID) of
+        [Blob=#blob{taken=false}] -> {T,Blob};
+        _ -> p_get_input2(T, Tid)
+    end;
+p_get_input2(T=[], Tid) ->
+    {T, p_get_input_first(Tid)}.
+p_get_input_first(Tid) ->
+    case ets:first(Tid) of
+        '$end_of_table' -> eof;
+        Key ->
+            [Blob] = ets:lookup(Key),
+            Blob
+    end.

@@ -23,6 +23,9 @@
     tar_load_modules/1,
     code_load_modules/1,
 
+    mkdirp/1,
+    rmdir/1,
+
     encode/1,
     encode/2,
     encode/3,
@@ -168,6 +171,7 @@ start_slave(Name, Host, LinkTo, Applications) ->
             Error
     end.
 
+
 path_load_modules(Src) ->
     {ok, filelib:fold_files(Src,".*\.beam", true, fun(Filename,Acc)->
         Mod = list_to_atom(filename:rootname(filename:basename(Filename))),
@@ -190,6 +194,26 @@ case erl_tar:extract(Src, [memory,compressed]) of
     Err ->
         Err
 end.
+
+
+mkdirp(Path) ->
+    AbsPath = filename:absname(Path),
+    lists:foldl(fun(Part,Prev)->
+        Cur = filename:join(Prev, Part),
+        case prim_file:is_dir(Cur) of
+            true -> Cur;
+            false -> prim_file:make_dir(Cur), Cur
+        end
+    end, "", filename:split(AbsPath)).
+
+rmdir(Path) ->
+    case prim_file:list_dir(Path) of
+        {ok, Files} ->
+            [rmdir(filename:join(Path, File)) || File <- Files],
+            prim_file:del_dir(Path);
+        _ ->
+            prim_file:delete(Path)
+    end.
 
 
 code_load_modules(Modules) ->

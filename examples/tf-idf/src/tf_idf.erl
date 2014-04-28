@@ -30,7 +30,8 @@ run(RunID, Slaves, Args=[Src, Dest]) ->
     edfs:mkdir(Dest),
 
     {ok,Pid} = erlduce_job:start_link(Slaves, [
-        {input, edfs:input("dataset")},
+        {id, {RunID,1}},
+        {input, fun()-> edfs:input(Src) end},
         {map, fun(Path, Bytes, Write) ->
             DocID = lists:last(filename:split(Path)),
             words(Bytes, fun(Word)-> Write({{Word,DocID}, 1}) end),
