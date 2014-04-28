@@ -67,7 +67,6 @@ slave_ack_input_all(Pid, BlobID) ->
 init({Nodes, JobSpec0}) ->
     process_flag(trap_exit, true),
     proplists:get_value(id, JobSpec0),
-    {ok, BaseDir} = application:get_env(erlduce_slave, dir),
 
     SlaveList = lists:foldl(fun({Node,Slots}, AccNodes)->
         lists:foldl(fun(_,Acc)-> [Node|Acc] end, AccNodes, lists:seq(1, Slots))
