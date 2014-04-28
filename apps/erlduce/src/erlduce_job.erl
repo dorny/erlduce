@@ -145,7 +145,6 @@ handle_info( _Info, State) ->
 
 
 terminate( normal, State=#state{ wait=Wait }) ->
-    io:format("job terminate: ~p\n",[Wait]),
     erlduce_utils:pmap(fun(From)-> gen_server:reply(From, ok) end, Wait),
     ok;
 terminate( _Reason, State) ->
