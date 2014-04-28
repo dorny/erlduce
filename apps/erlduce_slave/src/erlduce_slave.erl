@@ -41,7 +41,7 @@
     write :: function(),
 
     sem :: pid(),
-    mem_threshold :: number(),
+    mem_threshold = undefined :: number(),
 
     files = [] :: list(),
     dir = undefined ::string()
@@ -74,7 +74,6 @@ done(Pid) ->
 init(JobSpec) ->
     Master = proplists:get_value(master, JobSpec),
     link(Master),
-    {ok, MemThreshold} = application:get_env(erlduce_slave, emulator_memory_flush_threshold),
     erase(),
     {ok, #state{
         master = Master,
@@ -84,18 +83,31 @@ init(JobSpec) ->
         partition = proplists:get_value(partition, JobSpec),
         output = proplists:get_value(output, JobSpec),
         write = p_write_fun(proplists:get_value(combine, JobSpec)),
-        sem = erlduce_utils:sem_new(1),
-        mem_threshold = erlduce_utils:parse_size(MemThreshold)
+        sem = erlduce_utils:sem_new(1)
     }}.
 
 handle_call( {run,Slaves}, _From, State=#state{master=Master, job_id=JobID }) ->
+    erlduce_job:slave_req_input(Master, self()),
+    % TaskIndex
     {RunID, JobIndex} = JobID,
     TaskIndex = p_list_index(self(),Slaves),
+    % Dir
     {ok, BaseDir} = application:get_env(erlduce_slave, dir),
-    Dir = erlduce_utils:filename_join([BaseDir, RunID, JobIndex, TaskIndex]),
+    JobPart = [erlduce_utils:any_to_list(Part) || Part <- [RunID,"-",JobIndex,"-",TaskIndex]],
+    Dir = filename:join([BaseDir, JobPart]),
     erlduce_utils:mkdirp(Dir),
-    erlduce_job:slave_req_input(Master, self()),
-    {reply, ok, State#state{ task_index=TaskIndex, slaves=Slaves, dir=Dir }};
+    % MemThreshold
+    {ok, MemThresholdStr} = application:get_env(erlduce_slave, emulator_memory_flush_threshold),
+    MemThreshold0 = erlduce_utils:parse_size(MemThresholdStr),
+    Node = node(),
+    LocalCount = lists:foldl(fun(Pid,Sum)->
+        case node(Pid) of
+            Node -> Sum+1;
+            _ -> Sum
+        end
+    end, 0, Slaves),
+    MemThreshold = MemThreshold0 * LocalCount,
+    {reply, ok, State#state{ task_index=TaskIndex, slaves=Slaves, dir=Dir, mem_threshold=MemThreshold }};
 
 handle_call( done, _From, State=#state{ files=[], output=Output, task_index=Idx }) ->
     Items = p_get_items(),
@@ -104,7 +116,6 @@ handle_call( done, _From, State=#state{ files=[], output=Output, task_index=Idx 
     {stop, normal, ok, State};
 
 handle_call( done, _From, State=#state{ files=Files, output=Output, task_index=Idx }) ->
-    exit({error,not_implemented}),
     {stop, normal, ok, State};
 
 handle_call( _Request, _From, State) ->
@@ -148,7 +159,8 @@ handle_info( _Info, State) ->
     {noreply, State}.
 
 
-terminate( _Reason,_State) ->
+terminate( _Reason, #state{ dir=Dir }) ->
+    erlduce_utils:rmdir(Dir),
     ok.
 
 

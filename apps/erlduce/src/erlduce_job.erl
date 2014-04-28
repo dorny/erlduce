@@ -32,8 +32,7 @@
     slaves_count :: integer(),
     wait = [] :: list(pid()),
     blobs_queue :: ets:tid(),
-    blobs_taken :: ets:tid(),
-    dir :: string()
+    blobs_taken :: ets:tid()
 }).
 
 
@@ -58,10 +57,9 @@ slave_ack_input(Pid, BlobID) ->
 %% ===================================================================
 
 init({Nodes, JobSpec0}) ->
-
+    process_flag(trap_exit, true),
     {RunID, JobIndex} = proplists:get_value(id, JobSpec0),
     {ok, BaseDir} = application:get_env(erlduce_slave, dir),
-    Dir = erlduce_utils:filename_join([BaseDir, RunID, JobIndex]),
 
     SlaveList = lists:foldl(fun({Node,Slots}, AccNodes)->
         lists:foldl(fun(_,Acc)-> [Node|Acc] end, AccNodes, lists:seq(1, Slots))
@@ -78,6 +76,7 @@ init({Nodes, JobSpec0}) ->
         {ok, Pid} = erlduce_slave:start_link(Node,JobSpec),
         Pid
     end, SlaveList),
+
     erlduce_utils:pmap(fun(Pid) -> ok=erlduce_slave:run(Pid,Slaves) end, Slaves),
 
     BlobsQueue = ets:new(blobs_queue,[set]),
@@ -90,8 +89,7 @@ init({Nodes, JobSpec0}) ->
         slave_nodes = SlaveList,
         slaves_count = SlaveLen,
         blobs_queue = BlobsQueue,
-        blobs_taken = BlobsTaken,
-        dir = Dir
+        blobs_taken = BlobsTaken
     }}.
 
 
@@ -102,8 +100,9 @@ handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
 
 
+
 handle_cast( {slave_ack_input,BlobID},
-        State=#state{ blobs_taken=BlobsTaken, slaves=Slaves, slave_nodes=Nodes, slaves_count=Count, wait=Wait, dir=Dir }) ->
+        State=#state{ blobs_taken=BlobsTaken, slaves=Slaves, slaves_count=Count, wait=Wait }) ->
     End = case ets:update_counter(BlobsTaken, BlobID, {2,1}) of
         Count ->
             ets:delete(BlobsTaken, BlobID),
@@ -116,9 +115,7 @@ handle_cast( {slave_ack_input,BlobID},
     case End of
         true ->
             erlduce_utils:pmap(fun(Pid) -> erlduce_slave:done(Pid) end, Slaves),
-            erlduce_utils:pmap(fun(Node) -> rpc:call(Node, erlduce_utils, rmdir, [Dir]) end, Nodes),
-            erlduce_utils:pmap(fun(From) -> gen_server:reply(From, ok) end, Wait),
-            {stop, State};
+            {stop, normal, State};
         false -> {noreply, State}
     end;
 
@@ -130,12 +127,21 @@ handle_cast( _Msg, State) ->
     {noreply, State}.
 
 
+
+handle_info( {'EXIT', From, Reason}, State) ->
+    {stop, {error, {From,Reason}}, State};
+
 handle_info( _Info, State) ->
     {noreply, State}.
 
 
-terminate( _Reason,_State) ->
+
+terminate( normal, State=#state{wait=Wait, slave_nodes=Nodes}) ->
+    erlduce_utils:pmap(fun(From)-> gen_server:reply(From, ok) end, Wait),
+    ok;
+terminate( _Reason, State) ->
     ok.
+
 
 
 code_change(_OldVsn, State, _Extra) ->

@@ -3,12 +3,15 @@
 -author("Michal Dorner <dorner.michal@gmail.com>").
 
 -export([
-    run/3
+    start/3
 ]).
 
 
-run(RunID, Slaves, Args=[Src, Dest]) ->
 
+
+start(RunID, Slaves, Args=[Src, Dest]) ->
+
+    erlduce_utils:start_application(lager),
     io:format("~n====== DRIVER STARTED ======~n"),
     io:format( lists:concat([
         "run_id: ~p~n",

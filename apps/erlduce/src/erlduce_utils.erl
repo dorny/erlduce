@@ -25,13 +25,14 @@
 
     mkdirp/1,
     rmdir/1,
-    filename_join/1,
 
     encode/1,
     encode/2,
     encode/3,
     decode/1,
     decode/2,
+
+    any_to_list/1,
 
     getopts/7,
     cli_error/2,
@@ -216,13 +217,6 @@ rmdir(Path) ->
             prim_file:delete(Path)
     end.
 
-filename_join(Parts) ->
-    filename:join([filename_safe_arg(P) || P <- Parts]).
-filename_safe_arg(P) when is_integer(P) -> integer_to_list(P);
-filename_safe_arg(P) when is_atom(P) -> atom_to_list(P);
-filename_safe_arg(P) -> P.
-
-
 
 code_load_modules(Modules) ->
     lists:foreach(fun({Mod, Bin, Fn})-> {module, _Mod} = code:load_binary(Mod, Fn, Bin) end, Modules),
@@ -258,6 +252,13 @@ decode({snappy, Format}, Bytes) ->
     {ok, Bytes2} = snappy:decompress(Bytes),
     decode(Format,Bytes2).
 
+
+any_to_list(T) when is_list(T) -> T;
+any_to_list(T) when is_integer(T) -> integer_to_list(T);
+any_to_list(T) when is_atom(T) -> atom_to_list(T);
+any_to_list(T) when is_binary(T) -> binary_to_list(T);
+any_to_list(T) when is_tuple(T) -> tuple_to_list(T);
+any_to_list(T) when is_pid(T) -> pid_to_list(T).
 
 
 
