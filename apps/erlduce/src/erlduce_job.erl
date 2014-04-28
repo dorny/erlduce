@@ -66,7 +66,7 @@ slave_ack_input_all(Pid, BlobID) ->
 
 init({Nodes, JobSpec0}) ->
     process_flag(trap_exit, true),
-    {RunID, JobIndex} = proplists:get_value(id, JobSpec0),
+    proplists:get_value(id, JobSpec0),
     {ok, BaseDir} = application:get_env(erlduce_slave, dir),
 
     SlaveList = lists:foldl(fun({Node,Slots}, AccNodes)->
@@ -144,10 +144,10 @@ handle_info( _Info, State) ->
 
 
 
-terminate( normal, State=#state{ wait=Wait }) ->
+terminate( normal, #state{ wait=Wait }) ->
     erlduce_utils:pmap(fun(From)-> gen_server:reply(From, ok) end, Wait),
     ok;
-terminate( _Reason, State) ->
+terminate( _Reason, _State) ->
     ok.
 
 
