@@ -27,11 +27,11 @@
     code_change/3
 ]).
 
+-define( FLUSH_MIN_INTERVAL, 2*1000000).
+
 -record(state, {
     master::pid(),
     slaves = undefined :: list(pid()),
-
-    job_id :: tuple(),
     task_index = undefined :: integer(),
 
     map :: function(),
@@ -43,6 +43,7 @@
 
     sem :: pid(),
     mem_threshold = undefined :: number(),
+    last_flush = {0,0,0} :: erlang:timestamp(),
 
     files = [] :: list(),
     dir = undefined ::string()
@@ -83,26 +84,23 @@ init(JobSpec) ->
     erase(),
     {ok, #state{
         master = Master,
-        job_id = proplists:get_value(id, JobSpec),
         map = proplists:get_value(map, JobSpec),
         combine = Combine,
         reduce = Reduce,
         write = Write,
         partition = proplists:get_value(partition, JobSpec),
         output = proplists:get_value(output, JobSpec),
-        sem = erlduce_utils:sem_new(1)
+        sem = erlduce_utils:sem_new(1),
+        dir = proplists:get_value(dir, JobSpec)
     }}.
 
-handle_call( {run,Slaves}, _From, State=#state{master=Master, job_id=JobID }) ->
+handle_call( {run,Slaves}, _From, State=#state{master=Master, dir=Dir }) ->
     erlduce_job:slave_req_input(Master, self()),
     % TaskIndex
-    {RunID, JobIndex} = JobID,
     TaskIndex = p_list_index(self(),Slaves),
     % Dir
-    {ok, BaseDir} = application:get_env(erlduce_slave, dir),
-    JobPart = [erlduce_utils:any_to_list(Part) || Part <- [RunID,"-",JobIndex,"-",TaskIndex]],
-    Dir = filename:join([BaseDir, JobPart]),
-    erlduce_utils:mkdirp(Dir),
+    Dir2 = filename:join(Dir, integer_to_list(TaskIndex)),
+    erlduce_utils:mkdirp(Dir2),
     % MemThreshold
     {ok, MemThresholdStr} = application:get_env(erlduce_slave, emulator_memory_flush_threshold),
     MemThreshold0 = erlduce_utils:parse_size(MemThresholdStr),
@@ -114,36 +112,45 @@ handle_call( {run,Slaves}, _From, State=#state{master=Master, job_id=JobID }) ->
         end
     end, 0, Slaves),
     MemThreshold = MemThreshold0 * LocalCount,
-    {reply, ok, State#state{ task_index=TaskIndex, slaves=Slaves, dir=Dir, mem_threshold=MemThreshold }};
+    {reply, ok, State#state{ task_index=TaskIndex, slaves=Slaves, dir=Dir2, mem_threshold=MemThreshold }};
 
 % MAP-ONLY
 handle_call( done, _From, State=#state{ write=undefined }) ->
     {stop, normal, ok, State};
 
 % Combine or Reduce in Memory
-handle_call( done, _From, State=#state{ files=[], task_index=Idx, reduce=Reduce, output=Output }) ->
-    p_reduce_mem(Idx, Reduce, Output),
+handle_call( done, _From, State=#state{ master=Master, files=[], task_index=Idx, reduce=Reduce, output=Output }) ->
+    {ReduceTime, _} = timer:tc(fun()->
+        p_reduce_mem(Idx, Reduce, Output)
+    end),
+    erlduce_job:update_counter(Master, reduce_time, ReduceTime),
     {stop, normal, ok, State};
 
 % Combine or Reduce on Files
-handle_call( done, _From, State=#state{ dir=Dir, files=Files0, combine=Combine, reduce=Reduce, output=Output, task_index=Idx }) ->
-    Files = [ p_flush_to_disk(Dir, length(Files0)) | Files0],
-    Fun = p_merge_files_fun( Combine, Reduce, Output({open, Idx})),
-    Fun2 = erlduce_utils:merge_files(Files, Fun),
-    Fun2(close),
+handle_call( done, _From, State=#state{ master=Master, dir=Dir, files=Files0, combine=Combine, reduce=Reduce, output=Output, task_index=Idx }) ->
+    {ReduceTime, _} = timer:tc(fun()->
+        Files = [ p_flush_to_disk(Dir, length(Files0)) | Files0],
+        Fun = p_merge_files_fun( Combine, Reduce, Output({open, Idx})),
+        Fun2 = erlduce_utils:merge_files(Files, Fun),
+        Fun2(close)
+    end),
+    erlduce_job:update_counter(Master, reduce_time, ReduceTime),
     {stop, normal, ok, State};
 
 handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
 
 
-handle_cast( {input, eof}, State=#state{ dir=Dir, files=Files, sem=Sem}) ->
+handle_cast( {input, eof}, State=#state{ master=Master, dir=Dir, files=Files, sem=Sem}) ->
     State2 = case Files of
         [] -> State;
         _ ->
             erlduce_utils:sem_wait(Sem),
-            File = p_flush_to_disk(Dir, length(Files)),
+            {TmpWriteTime,File} = timer:tc(fun()->
+                p_flush_to_disk(Dir, length(Files))
+            end),
             erlduce_utils:sem_signal(Sem),
+            erlduce_job:update_counter(Master, reduce_time, TmpWriteTime),
             State#state{ files=[File|Files] }
     end,
     {noreply, State2};
@@ -151,16 +158,29 @@ handle_cast( {input, Blob}, State=#state{ master=Master, slaves=Slaves, sem=Sem,
     spawn_link(?MODULE, p_map_worker, [self(),Master,Blob,Slaves,Sem,Write,Map,Part]),
     {noreply, State};
 
+handle_cast( {merge, BlobID, []}, State=#state{ master=Master }) ->
+    erlduce_job:slave_ack_input(Master,BlobID),
+    {noreply,State};
+
 handle_cast( {merge, BlobID, Items}, State=#state{
-        master=Master, write=Write, sem=Sem, mem_threshold=MemThreshold, dir=Dir, files=Files }) ->
+        master=Master, write=Write, sem=Sem, mem_threshold=MemThreshold, last_flush=LastFlush, dir=Dir, files=Files }) ->
     erlduce_utils:sem_wait(Sem),
-    [Write(Item) || Item <- Items],
+    {Time, _} = timer:tc(fun()->
+        [Write(Item) || Item <- Items], ok
+    end),
     erlduce_utils:sem_signal(Sem),
-    MemUsed = erlang:memory(total),
+    erlduce_job:update_counter(Master, reduce_time, Time),
+
+    HighMem = p_check_mem(MemThreshold),
+    TDiff = timer:now_diff(os:timestamp(), LastFlush),
+
     State2 = if
-        MemUsed > MemThreshold ->
-            File = p_flush_to_disk(Dir, length(Files)),
-            State#state{ files=[File|Files] };
+        HighMem andalso TDiff > ?FLUSH_MIN_INTERVAL ->
+            {TmpWriteTime,File} = timer:tc(fun()->
+                p_flush_to_disk(Dir, length(Files))
+            end),
+            erlduce_job:update_counter(Master, reduce_time, TmpWriteTime),
+            State#state{ files=[File|Files], last_flush=os:timestamp() };
         true -> State
     end,
     erlduce_job:slave_ack_input(Master,BlobID),
@@ -222,13 +242,20 @@ p_map_worker(Slave, Master, {BlobID, Path, Hosts}, Slaves, Sem, Write, Map, Part
         {ok, Bytes} ->
             erlduce_utils:sem_wait(Sem),
             erlduce_job:slave_req_input(Master, Slave),
-            erlang:erase(),
-            Map(Path,Bytes,Write),
-            Items = erlang:erase(),
+            {MapTime, Items} = timer:tc(fun()->
+                erlang:erase(),
+                Map(Path,Bytes,Write),
+                erlang:erase()
+            end),
             erlduce_utils:sem_signal(Sem),
+            erlduce_job:update_counter(Master,[{input_bytes, byte_size(Bytes)}, {map_time, MapTime} ]),
             case Write of
                 undefined -> erlduce_job:slave_ack_input_all(Master, BlobID);
-                _ -> p_combine_worker_dispatch(BlobID, Items, Slaves, Part)
+                _ ->
+                    {ShuffleTime,_} = timer:tc(fun()->
+                        p_combine_worker_dispatch(BlobID, Items, Slaves, Part)
+                    end),
+                    erlduce_job:update_counter(Master, shuffle_time, ShuffleTime)
             end;
         Error ->
             exit({error,{BlobID, Error}})
@@ -248,12 +275,23 @@ p_combine_worker_dispatch(BlobID, Items, Slaves, Partition) ->
     ok.
 
 
+p_check_mem(MemThreshold) ->
+    MemUsed = erlang:memory(total),
+    State2 = if
+        MemUsed > MemThreshold -> true;
+        true -> false
+    end.
+
+
 p_flush_to_disk(Dir, Idx) ->
+    Res = p_flush_to_disk_2(Dir, Idx),
+    erlang:garbage_collect(),
+    Res.
+p_flush_to_disk_2(Dir, Idx) ->
     Buf = lists:keysort(1, erase()),
     File = filename:join(Dir, integer_to_list(Idx)),
-    {ok, IoDev} = file:open(File, [write,raw,binary,delayed_write]),
-    [erlduce_utils:file_write_record(IoDev,Item) || Item <- Buf],
-    file:close(IoDev),
+    Bin=[erlduce_utils:to_file_record(Item) || Item <- Buf],
+    ok=prim_file:write_file(File, Bin),
     File.
 
 

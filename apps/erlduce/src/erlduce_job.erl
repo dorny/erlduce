@@ -8,6 +8,8 @@
 -export([
     start_link/2,
     stop/2,
+    update_counter/2,
+    update_counter/3,
     wait/1
 ]).
 
@@ -32,10 +34,27 @@
     slaves :: list(pid()),
     slave_nodes :: list(atom()),
     slaves_count :: integer(),
-    wait = [] :: list(pid()),
     blobs_queue :: ets:tid(),
-    blobs_taken :: ets:tid()
+    blobs_taken :: ets:tid(),
+
+    counters :: ets:tid(),
+    dir :: string(),
+    wait = [] :: list(pid()),
+
+    start_time :: erlang:timestamp(),
+    input_len = 0 :: integer(),
+    total_done = 0 :: integer(),
+    last_progress = 0 :: integer(),
+    progress :: function() | undefined
 }).
+
+-define(DEFAULT_COUNTERS, [
+    map_time,
+    shuffle_time,
+    reduce_time,
+    input_bytes
+    % network_send_bytes
+]).
 
 
 start_link(Nodes, JobSpec) ->
@@ -44,6 +63,12 @@ start_link(Nodes, JobSpec) ->
 
 stop(Pid, Reason) ->
     gen_server:cast(Pid, {stop, Reason}).
+
+update_counter(Pid, IncList) ->
+    gen_server:cast(Pid, {update_counter, IncList}).
+
+update_counter(Pid, Key, Incr) ->
+    gen_server:cast(Pid, {update_counter, [{Key, Incr}]}).
 
 wait(Pid) ->
     gen_server:call(Pid, wait, infinity).
@@ -65,19 +90,26 @@ slave_ack_input_all(Pid, BlobID) ->
 %% ===================================================================
 
 init({Nodes, JobSpec0}) ->
+    StartTime = os:timestamp(),
     process_flag(trap_exit, true),
-    proplists:get_value(id, JobSpec0),
 
     SlaveList = lists:foldl(fun({Node,Slots}, AccNodes)->
         lists:foldl(fun(_,Acc)-> [Node|Acc] end, AccNodes, lists:seq(1, Slots))
     end, [], Nodes),
 
+    {RunID, JobID} = proplists:get_value(id, JobSpec0),
+    {ok, BaseDir} = application:get_env(erlduce_slave, dir),
+    DirParts = [erlduce_utils:any_to_list(Part) || Part <- [BaseDir, RunID, JobID]],
+    Dir = filename:join(DirParts),
+
     SlaveLen = length(SlaveList),
-    JobSpec1 = [{master, self()} | JobSpec0],
+    JobSpec1 = [{master, self()}, {dir, Dir} | JobSpec0],
     JobSpec = case lists:keymember(partition, 1, JobSpec1) of
         true -> JobSpec1;
         false -> [{partition, fun(X)-> erlang:phash2(X,SlaveLen) end} | JobSpec1]
     end,
+
+
 
     Slaves = erlduce_utils:pmap(fun(Node)->
         {ok, Pid} = erlduce_slave:start_link(Node,JobSpec),
@@ -86,17 +118,26 @@ init({Nodes, JobSpec0}) ->
 
     erlduce_utils:pmap(fun(Pid) -> ok=erlduce_slave:run(Pid,Slaves) end, Slaves),
 
-    BlobsQueue = ets:new(blobs_queue,[set]),
-    BlobsTaken = ets:new(blobs_taken,[set]),
+    BlobsQueue = ets:new(blobs_queue,[set,private]),
+    BlobsTaken = ets:new(blobs_taken,[set, private]),
     Blobs = p_prepare_input(proplists:get_value(input, JobSpec)),
     ets:insert(BlobsQueue,Blobs),
+
+    Counters = ets:new(counters,[set,private]),
+    InitCounters = [ {Key,0} || Key <- ?DEFAULT_COUNTERS],
+    ets:insert(Counters, InitCounters),
 
     {ok, #state{
         slaves = Slaves,
         slave_nodes = SlaveList,
         slaves_count = SlaveLen,
         blobs_queue = BlobsQueue,
-        blobs_taken = BlobsTaken
+        blobs_taken = BlobsTaken,
+        counters = Counters,
+        dir = Dir,
+        start_time = StartTime,
+        input_len = length(Blobs),
+        progress = proplists:get_value(progress, JobSpec)
     }}.
 
 
@@ -107,22 +148,29 @@ handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
 
 
-handle_cast( {slave_ack_input,BlobID}, State=#state{ blobs_taken=BlobsTaken, slaves=Slaves, slaves_count=Count}) ->
-    case ets:update_counter(BlobsTaken, BlobID, {2,1}) of
+handle_cast( {slave_ack_input,BlobID}, State=#state{ blobs_taken=BlobsTaken, slaves=Slaves, slaves_count=Count, total_done=TotalDone }) ->
+    State2 = case ets:update_counter(BlobsTaken, BlobID, {2,1}) of
         Count ->
             ets:delete(BlobsTaken, BlobID),
-            p_check_is_done(self(), BlobsTaken, Slaves);
-        _ -> ok
+            p_check_is_done(self(), BlobsTaken, Slaves),
+            LastProg = p_progress(State),
+            State#state{ total_done=TotalDone+1, last_progress=LastProg };
+        _ -> State
     end,
-    {noreply, State};
-handle_cast( {slave_ack_input_all, BlobID}, State=#state{ blobs_taken=BlobsTaken, slaves=Slaves}) ->
+    {noreply, State2};
+handle_cast( {slave_ack_input_all, BlobID}, State=#state{ blobs_taken=BlobsTaken, slaves=Slaves, total_done=TotalDone }) ->
     ets:delete(BlobsTaken, BlobID),
     p_check_is_done(self(), BlobsTaken, Slaves),
-    {noreply, State};
+    LastProg = p_progress(State),
+    {noreply, State#state{ total_done=TotalDone+1, last_progress=LastProg }};
 
 
 handle_cast( {slave_req_input, Pid, Host}, State=#state{ blobs_queue=BlobsQueue, blobs_taken=BlobsTaken }) ->
     erlduce_slave:input(Pid,p_get_input(Host,BlobsQueue,BlobsTaken)),
+    {noreply, State};
+
+handle_cast( {update_counter, IncList}, State=#state{ counters=Counters }) ->
+    [ ets:update_counter(Counters, Key, Incr) || {Key, Incr} <- IncList],
     {noreply, State};
 
 handle_cast( {stop, Reason}, State) ->
@@ -143,8 +191,13 @@ handle_info( _Info, State) ->
 
 
 
-terminate( normal, #state{ wait=Wait }) ->
-    erlduce_utils:pmap(fun(From)-> gen_server:reply(From, ok) end, Wait),
+terminate( normal, #state{  slave_nodes=Nodes, dir=Dir, wait=Wait, counters=Counters, start_time=StartTime }) ->
+    Stats0 = ets:tab2list(Counters),
+    TotalTime = timer:now_diff(os:timestamp(), StartTime)/1000000,
+    Stats1 =  lists:keysort(1, Stats0),
+    Stats = [{job_time, TotalTime} | Stats1],
+    erlduce_utils:pmap(fun(Node)-> rpc:call(Node, erlduce_utils, rmdir, [Dir]) end, Nodes),
+    erlduce_utils:pmap(fun(From)-> gen_server:reply(From, {ok, Stats}) end, Wait),
     ok;
 terminate( _Reason, _State) ->
     ok.
@@ -216,3 +269,13 @@ p_check_is_done(Master, BlobsTaken, Slaves) ->
             end);
         _ -> ok
     end.
+
+
+p_progress(#state{input_len=InpLen, total_done=DoneLen, last_progress=LastProg, progress=ProgFun}) ->
+    Prog =  trunc((DoneLen/InpLen) *10),
+    if
+        Prog > LastProg andalso is_function(ProgFun) ->
+            spawn(fun()->ProgFun(Prog*10) end);
+        true -> ok
+    end,
+    Prog.

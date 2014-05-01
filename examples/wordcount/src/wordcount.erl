@@ -10,15 +10,23 @@
 
 start(RunID, Slaves, Args=[Src, Dest]) ->
 
+    io:format("~n====== DRIVER STARTED ======~n"),
+    io:format( lists:concat([
+        "run_id: ~p~n",
+        "module: ~p~n",
+        "slaves: ~p~n",
+        "args:   ~p~n"
+    ]),[RunID, ?MODULE, Slaves, Args]),
+
     edfs:rm(Dest),
     edfs:mkdir(Dest),
 
+    JobID = {RunID,'wordcount'},
     {ok,Pid} = erlduce_job:start_link(Slaves, [
-        {id, {RunID,'wordcount'}},
+        {id, JobID},
         {input, fun()-> edfs:input(Src) end},
         {map, fun(Path, Bytes, Write) ->
-            DocID = lists:last(filename:split(Path)),
-            words(Bytes, fun(Word)-> Write({Word, 1}) end)
+            words(Bytes, Write)
         end},
         {combine, fun(_Key, A,B) ->
             A+B
@@ -26,32 +34,31 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         {partition, fun(_Key)-> 0 end},
         {output, edfs_lib:iter_write_list(100000, Dest, 1, fun(Data)->
             [ [Word, " ", integer_to_list(Count), "\n"] || {Word, Count} <- Data]
-        end)}
+        end)},
+        {progress, fun(P) -> io:format("done: ~p%~n",[P]) end }
 
     ]),
-    erlduce_job:wait(Pid),
+    {ok, Stats} = erlduce_job:wait(Pid),
+    io:format("~n====== JOB DONE ======~n"),
+    [ io:format("~p: ~p~n",[Key,Val]) || {Key,Val} <- [{id, JobID}|Stats]],
     ok.
 
 
-words(Bin, F) ->
-    words_2(Bin, Bin, 0, 0, F).
+words(Bin, Write) ->
+    words_2(Bin, [], Write).
 
-words_2(Bin, <<C, Rest/binary>>, Pos, Len, F) when
+words_2(<<C, Rest/binary>>, Acc, Write) when
         (C >= $A) and (C =< $Z);
         (C >= $a) and (C =< $z);
         (C >= $0) and (C =< $9);
         C =:= $_ ->
-    words_2(Bin, Rest, Pos+1, Len+1, F);
+    words_2(Rest, [C | Acc], Write);
+words_2(<<_, Rest/binary>>, [], Write) ->
+    words_2(Rest, [], Write);
+words_2(<<>>, [], _Write) ->
+    ok;
+words_2(Rest, Acc, Write) ->
+    Word = list_to_binary(lists:reverse(Acc)),
+    F = Write({Word, 1}),
+    words_2(Rest, [], F).
 
-words_2(Bin, <<_, Rest/binary>>, Pos, 0, F) ->
-    words_2(Bin, Rest, Pos+1, 0, F);
-
-words_2(Bin, <<_, Rest/binary>>, Pos, Len, F) ->
-    F(binary:part(Bin, Pos-Len, Len)),
-    words_2(Bin, Rest, Pos+1, 0, F);
-
-words_2(Bin, <<>>, Pos, Len, F) ->
-    case Len of
-        0 -> ok;
-        _ -> F(binary:part(Bin, Pos-Len, Len)), ok
-    end.

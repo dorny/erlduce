@@ -27,7 +27,7 @@
     rmdir/1,
 
     merge_files/2,
-    file_write_record/2,
+    to_file_record/1,
     file_read_record/1,
 
     encode/1,
@@ -291,10 +291,10 @@ p_merge_files_read_records(Key, Fd, Acc) ->
 
 
 
-file_write_record(IoDevice, Term) ->
+to_file_record(Term) ->
     B = erlang:term_to_binary(Term),
     Len = size(B),
-    file:write(IoDevice, <<Len:32, B/binary>>).
+    <<Len:32, B/binary>>.
 
 file_read_record(IoDevice) ->
     case file:read(IoDevice, 4) of
