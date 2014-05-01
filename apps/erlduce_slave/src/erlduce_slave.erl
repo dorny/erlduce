@@ -41,7 +41,8 @@
     output :: function(),
     write :: function(),
 
-    sem :: pid(),
+    sem_map :: pid(),
+    sem_merge :: pid(),
     mem_threshold = undefined :: number(),
     last_flush = {0,0,0} :: erlang:timestamp(),
 
@@ -90,7 +91,8 @@ init(JobSpec) ->
         write = Write,
         partition = proplists:get_value(partition, JobSpec),
         output = proplists:get_value(output, JobSpec),
-        sem = erlduce_utils:sem_new(1),
+        sem_map = erlduce_utils:sem_new(1),
+        sem_merge = erlduce_utils:sem_new(1),
         dir = proplists:get_value(dir, JobSpec)
     }}.
 
@@ -141,21 +143,21 @@ handle_call( _Request, _From, State) ->
     {reply, ignored, State}.
 
 
-handle_cast( {input, eof}, State=#state{ master=Master, dir=Dir, files=Files, sem=Sem}) ->
+handle_cast( {input, eof}, State=#state{ master=Master, dir=Dir, files=Files, sem_map=SemMap}) ->
     State2 = case Files of
         [] -> State;
         _ ->
-            erlduce_utils:sem_wait(Sem),
+            erlduce_utils:sem_wait(SemMap),
             {TmpWriteTime,File} = timer:tc(fun()->
                 p_flush_to_disk(Dir, length(Files))
             end),
-            erlduce_utils:sem_signal(Sem),
+            erlduce_utils:sem_signal(SemMap),
             erlduce_job:update_counter(Master, reduce_time, TmpWriteTime),
             State#state{ files=[File|Files] }
     end,
     {noreply, State2};
-handle_cast( {input, Blob}, State=#state{ master=Master, slaves=Slaves, sem=Sem, write=Write, map=Map, partition=Part }) ->
-    spawn_link(?MODULE, p_map_worker, [self(),Master,Blob,Slaves,Sem,Write,Map,Part]),
+handle_cast( {input, Blob}, State=#state{ master=Master, slaves=Slaves, sem_map=SemMap, sem_merge=SemMerge, write=Write, map=Map, partition=Part }) ->
+    spawn_link(?MODULE, p_map_worker, [self(),Master,Blob,Slaves,{SemMap,SemMerge},Write,Map,Part]),
     {noreply, State};
 
 handle_cast( {merge, BlobID, []}, State=#state{ master=Master }) ->
@@ -163,12 +165,12 @@ handle_cast( {merge, BlobID, []}, State=#state{ master=Master }) ->
     {noreply,State};
 
 handle_cast( {merge, BlobID, Items}, State=#state{
-        master=Master, write=Write, sem=Sem, mem_threshold=MemThreshold, last_flush=LastFlush, dir=Dir, files=Files }) ->
-    erlduce_utils:sem_wait(Sem),
+        master=Master, write=Write, sem_merge=SemMerge, mem_threshold=MemThreshold, last_flush=LastFlush, dir=Dir, files=Files }) ->
+    erlduce_utils:sem_wait(SemMerge),
     {Time, _} = timer:tc(fun()->
         [Write(Item) || Item <- Items], ok
     end),
-    erlduce_utils:sem_signal(Sem),
+    erlduce_utils:sem_signal(SemMerge),
     erlduce_job:update_counter(Master, reduce_time, Time),
 
     HighMem = p_check_mem(MemThreshold),
@@ -237,17 +239,19 @@ p_write_combine_fun(Combine) ->
     end.
 
 
-p_map_worker(Slave, Master, {BlobID, Path, Hosts}, Slaves, Sem, Write, Map, Part) ->
+p_map_worker(Slave, Master, {BlobID, Path, Hosts}, Slaves, {SemMap,SemMerge}, Write, Map, Part) ->
     case edfs:read({BlobID,Hosts}) of
         {ok, Bytes} ->
-            erlduce_utils:sem_wait(Sem),
+            erlduce_utils:sem_wait(SemMap),
+            erlduce_utils:sem_wait(SemMerge),
             erlduce_job:slave_req_input(Master, Slave),
             {MapTime, Items} = timer:tc(fun()->
                 erlang:erase(),
                 Map(Path,Bytes,Write),
                 erlang:erase()
             end),
-            erlduce_utils:sem_signal(Sem),
+            erlduce_utils:sem_signal(SemMerge),
+            erlduce_utils:sem_signal(SemMap),
             erlduce_job:update_counter(Master,[{input_bytes, byte_size(Bytes)}, {map_time, MapTime} ]),
             case Write of
                 undefined -> erlduce_job:slave_ack_input_all(Master, BlobID);
