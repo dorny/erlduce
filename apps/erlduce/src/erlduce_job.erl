@@ -96,6 +96,7 @@ init({Nodes, JobSpec0}) ->
     SlaveList = lists:foldl(fun({Node,Slots}, AccNodes)->
         lists:foldl(fun(_,Acc)-> [Node|Acc] end, AccNodes, lists:seq(1, Slots))
     end, [], Nodes),
+    SlaveNodes = lists:usort(SlaveList),
 
     {RunID, JobID} = proplists:get_value(id, JobSpec0),
     {ok, BaseDir} = application:get_env(erlduce_slave, dir),
@@ -108,8 +109,6 @@ init({Nodes, JobSpec0}) ->
         true -> JobSpec1;
         false -> [{partition, fun(X)-> erlang:phash2(X,SlaveLen) end} | JobSpec1]
     end,
-
-
 
     Slaves = erlduce_utils:pmap(fun(Node)->
         {ok, Pid} = erlduce_slave:start_link(Node,JobSpec),
@@ -129,7 +128,7 @@ init({Nodes, JobSpec0}) ->
 
     {ok, #state{
         slaves = Slaves,
-        slave_nodes = SlaveList,
+        slave_nodes = SlaveNodes,
         slaves_count = SlaveLen,
         blobs_queue = BlobsQueue,
         blobs_taken = BlobsTaken,

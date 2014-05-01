@@ -25,7 +25,7 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
     {ok,Pid} = erlduce_job:start_link(Slaves, [
         {id, JobID},
         {input, fun()-> edfs:input(Src) end},
-        {map, fun(Path, Bytes, Write) ->
+        {map, fun(_Path, Bytes, Write) ->
             words(Bytes, Write)
         end},
         {combine, fun(_Key, A,B) ->
