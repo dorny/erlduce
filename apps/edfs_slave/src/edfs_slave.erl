@@ -62,7 +62,7 @@ read(BlobID,[],[]) ->
 read(_BlobID,[],Errors) ->
     {error, Errors}.
 p_read(BlobID, Host) when is_atom(Host) ->
-    case gen_server:call(?NAME(Host), {read, BlobID}) of
+    case gen_server:call(?NAME(Host), {read, BlobID}, infinity) of
         {ok, {file, Filename}} ->
             prim_file:read_file(Filename);
         {ok, {pid, Pid}} ->
@@ -82,7 +82,7 @@ write({BlobID,Hosts}, Bytes) ->
         false -> {error, failed_to_write_bytes}
     end.
 p_write(BlobID, Bytes, Host) ->
-    case gen_server:call(?NAME(Host), {write, BlobID}) of
+    case gen_server:call(?NAME(Host), {write, BlobID}, infinity) of
         {ok, {file, Filename}} ->
             p_write_file_local(BlobID, Filename, Bytes, Host);
         {ok, {pid, Pid}} ->
