@@ -65,11 +65,10 @@ cmd_dist(Args) ->
     end, Files1, [erlduce,edfs,mnesia]),
 
     Localhost = erlduce_utils:host(),
-    Name = new_job_id(dist),
     {ok, Resources} = application:get_env(erlduce,hosts),
     Hosts = [Host || {Host, _} <- Resources, Host=/=Localhost],
     Slaves0 = erlduce_utils:pmap(fun(Host)->
-        slave:start(Host, Name, " -setcookie "++atom_to_list(erlang:get_cookie()))
+        slave:start(Host, 'erlduce_dist', " -setcookie "++atom_to_list(erlang:get_cookie()))
     end, Hosts),
     Slaves=lists:foldl(fun
         ({ok, Node},Acc)-> [Node|Acc];
@@ -102,7 +101,6 @@ cmd_run(Args) ->
     ],
     {Opts, DriverArgs} = erlduce_utils:getopts(OptSpecList, Args, [start], 0, infinity, "erlduce run","Run erlduce driver"),
     Start = proplists:get_value(start, Opts),
-    RunID = new_job_id(Start),
 
     PaModules = lists:flatmap(fun(Path)->
         case erlduce_utils:path_load_modules(Path) of
@@ -117,7 +115,7 @@ cmd_run(Args) ->
         end
     end, proplists:get_all_values(tar, Opts)),
     Modules = PaModules++TarModules,
-    case erlduce:run(RunID, Start, Modules, DriverArgs) of
+    case erlduce:run(Start, Modules, DriverArgs) of
         ok -> halt();
         {ok, Result} -> io:format("~p~n",[Result]), halt();
         {error, Reason} -> io:fwrite(standard_error, "error: ~p~n", [Reason]), halt(1)
@@ -159,9 +157,3 @@ ensure_connect() ->
 %% ===================================================================
 %% PRIVATE
 %% ===================================================================
-new_job_id(Start) ->
-    {{Year,Month,Day},{Hour,Min,Sec}} = calendar:local_time(),
-    Str = lists:flatten([
-        atom_to_list(Start), "-", io_lib:format("~B-~2..0B-~2..0B--~2..0B-~2..0B-~2..0B", [Year,Month,Day,Hour,Min,Sec])
-    ]),
-    list_to_atom(Str).

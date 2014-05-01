@@ -10,7 +10,7 @@
 -export([
     start/0,
     stop/0,
-    run/4
+    run/3
 ]).
 
 
@@ -38,11 +38,10 @@ stop() ->
     application:stop(erlduce).
 
 
-run(RunID, Start, Modules, DriverArgs) when is_atom(RunID), is_atom(Start), is_list(Modules), is_list(DriverArgs) ->
+run(Start, Modules, DriverArgs) when is_atom(Start), is_list(Modules), is_list(DriverArgs) ->
     application:load(erlduce_slave),
-    case erlduce_master:run_slaves(RunID) of
-        {ok, []} -> {error, no_slots};
-        {ok, Slaves} ->
+    case erlduce_master:run_slaves(Start) of
+        {ok, {RunID, Slaves}} ->
             erlduce_utils:pmap(fun({Node,_})->
                 rpc:call(Node, erlduce_utils, code_load_modules, [Modules])
             end, Slaves),
