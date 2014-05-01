@@ -277,7 +277,7 @@ p_combine_worker_dispatch(BlobID, Items, Slaves, Partition) ->
 
 p_check_mem(MemThreshold) ->
     MemUsed = erlang:memory(total),
-    State2 = if
+    if
         MemUsed > MemThreshold -> true;
         true -> false
     end.

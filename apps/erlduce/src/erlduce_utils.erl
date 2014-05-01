@@ -149,7 +149,7 @@ sem_signal(Pid) ->
     {node_list_ok(), node_list_error()}.
 start_slaves(Name, Hosts, Applications, LinkTo) ->
     pmap(fun
-        (H={Host,Meta})-> {H, start_slave(Name,Host,LinkTo, Applications)};
+        (H={Host,_Meta})-> {H, start_slave(Name,Host,LinkTo, Applications)};
         (Host)-> {Host, start_slave(Name,Host,LinkTo, Applications)}
     end, Hosts).
 
