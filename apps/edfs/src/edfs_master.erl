@@ -64,7 +64,7 @@
 start_link() ->
     gen_server:start_link({local, ?MODULE},?MODULE, {}, []).
 
-stat(Path) when is_binary(Path) ->
+stat(Path) when is_binary(Path) orelse is_integer(Path) ->
     ?RPC(p_stat, [Path]).
 
 blobs(Path) when is_binary(Path) orelse is_integer(Path) ->
@@ -432,15 +432,18 @@ p_rmf(Inode) ->
     end.
 
 
-p_stat(Path) ->
-    mnesia:activity(transaction, fun()->
+p_stat(Path) when is_binary(Path)->
+    mnesia:activity(ets, fun()->
         case p_get_inode(Path) of
-            {ok, Inode} ->
-                case mnesia:read(edfs_rec, Inode) of
-                    [#edfs_rec{type=Type}] -> {ok, {Inode, Type}};
-                    [] -> {error, enoent}
-                end;
+            {ok, Inode} -> p_stat(Inode);
             Error -> Error
+        end
+    end);
+p_stat(Inode) when is_integer(Inode) ->
+    mnesia:activity(ets, fun()->
+        case mnesia:read(edfs_rec, Inode) of
+            [#edfs_rec{type=Type}] -> {ok, {Inode, Type}};
+            [] -> {error, enoent}
         end
     end).
 

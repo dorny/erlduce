@@ -76,33 +76,32 @@ get_inode(Path)->
 
 
 input(Path) ->
-    case p_input(Path) of
-        {ok, DeepInput} -> {ok, lists:flatten(DeepInput)};
-        Error -> Error
+    case get_inode(Path) of
+        {ok, Inode} ->
+            {ok, p_input(Path, Inode,[])};
+        Error ->
+            exit(Error)
     end.
-p_input(Path) ->
-    case stat(Path) of
-        {ok, {Inode, directory}} ->
-            case ls(Inode) of
+p_input(Path, ParentInode,Acc0) ->
+    case stat(ParentInode) of
+        {ok, {ChildInode, directory}} ->
+            case ls(ChildInode) of
                 {ok, Files} ->
-                    Res = lists:foldl(fun({File,_Inode}, Acc)->
-                        case p_input(filename:join(Path,File)) of
-                            {ok, Input} -> [Input|Acc];
-                            _ -> Acc
-                        end
-                    end, [], Files),
-                    {ok, Res};
-                Error -> Error
+                    lists:foldl(fun({File,Inode}, Acc)->
+                        p_input(filename:join(Path,File), Inode, Acc)
+                    end, Acc0, Files);
+                Error -> exit(Error)
             end;
-        {ok, {Inode, regular}} ->
-            case blobs(Inode) of
+        {ok, {ChildInode, regular}} ->
+            case blobs(ChildInode) of
                 {ok, Blobs} ->
-                    {ok, [{BlobID, Path, Hosts} || {BlobID, Hosts} <- Blobs]};
-                Error -> Error
+                    lists:foldl(fun({BlobID, Hosts},Acc)->
+                        [{BlobID, Path, Hosts} | Acc]
+                    end, Acc0, Blobs);
+                Error -> exit(Error)
             end;
-        Error -> Error
+        Error -> exit(Error)
     end.
-
 
 
 ls(Inode) when is_number(Inode)->
@@ -123,6 +122,8 @@ rm(Path) ->
     edfs_master:rm(p_as_binary(Path)).
 
 
+stat(Inode) when is_number(Inode) ->
+    edfs_master:stat(Inode);
 stat(Path) ->
     edfs_master:stat(p_as_binary(Path)).
 

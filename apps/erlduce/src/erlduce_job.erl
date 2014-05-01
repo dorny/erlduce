@@ -192,7 +192,7 @@ handle_info( _Info, State) ->
 
 terminate( normal, #state{  slave_nodes=Nodes, dir=Dir, wait=Wait, counters=Counters, start_time=StartTime }) ->
     Stats0 = ets:tab2list(Counters),
-    TotalTime = timer:now_diff(os:timestamp(), StartTime)/1000000,
+    TotalTime = round(timer:now_diff(os:timestamp(), StartTime)/1000000),
     Stats1 =  lists:keysort(1, Stats0),
     Stats = [{job_time, TotalTime} | Stats1],
     erlduce_utils:pmap(fun(Node)-> rpc:call(Node, erlduce_utils, rmdir, [Dir]) end, Nodes),
