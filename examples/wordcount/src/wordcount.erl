@@ -26,7 +26,7 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         {id, JobID},
         {input, fun()-> edfs:input(Src) end},
         {map, fun(_Path, Bytes, Write) ->
-            words(Bytes, Write)
+            words(Bytes, fun(Word) -> Write(Word,1) end)
         end},
         {combine, fun(_Key, A,B) ->
             A+B
@@ -40,7 +40,6 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         % end)},
         {output, fun edfs_lib:null_writter/1},
         {progress, fun(P) -> io:format("done: ~p%~n",[P]) end }
-
     ]),
     {ok, Stats} = erlduce_job:wait(Pid),
     io:format("~n====== JOB DONE ======~n"),
@@ -48,21 +47,21 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
     ok.
 
 
-words(Bin, Write) ->
-    words_2(Bin, [], Write).
+words(Bin, Fun) ->
+    words_2(Bin, [], Fun).
 
-words_2(<<C, Rest/binary>>, Acc, Write) when
+words_2(<<C, Rest/binary>>, Acc, Fun) when
         (C >= $A) and (C =< $Z);
         (C >= $a) and (C =< $z);
         (C >= $0) and (C =< $9);
         C =:= $_ ->
-    words_2(Rest, [C | Acc], Write);
-words_2(<<_, Rest/binary>>, [], Write) ->
-    words_2(Rest, [], Write);
+    words_2(Rest, [C | Acc], Fun);
+words_2(<<_, Rest/binary>>, [], Fun) ->
+    words_2(Rest, [], Fun);
 words_2(<<>>, [], _Write) ->
     ok;
-words_2(Rest, Acc, Write) ->
+words_2(Rest, Acc, Fun) ->
     Word = list_to_binary(lists:reverse(Acc)),
-    F = Write({Word, 1}),
-    words_2(Rest, [], F).
+    Fun(Word),
+    words_2(Rest, [], Fun).
 

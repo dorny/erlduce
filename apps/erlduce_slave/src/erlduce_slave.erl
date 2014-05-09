@@ -40,6 +40,7 @@
     partition :: function() | undefined,
     output :: function(),
     write :: function(),
+    merge :: function(),
 
     sem_map :: pid(),
     sem_merge :: pid(),
@@ -81,6 +82,7 @@ init(JobSpec) ->
     Combine = proplists:get_value(combine, JobSpec),
     Reduce = proplists:get_value(reduce, JobSpec),
     Write = p_write_fun(Combine,Reduce),
+    Merge = p_merge_fun(Combine,Reduce),
 
     erase(),
     {ok, #state{
@@ -89,6 +91,7 @@ init(JobSpec) ->
         combine = Combine,
         reduce = Reduce,
         write = Write,
+        merge = Merge,
         partition = proplists:get_value(partition, JobSpec),
         output = proplists:get_value(output, JobSpec),
         sem_map = erlduce_utils:sem_new(1),
@@ -165,10 +168,10 @@ handle_cast( {merge, BlobID, []}, State=#state{ master=Master }) ->
     {noreply,State};
 
 handle_cast( {merge, BlobID, Items}, State=#state{
-        master=Master, write=Write, sem_merge=SemMerge, mem_threshold=MemThreshold, last_flush=LastFlush, dir=Dir, files=Files }) ->
+        master=Master, merge=Merge, sem_merge=SemMerge, mem_threshold=MemThreshold, last_flush=LastFlush, dir=Dir, files=Files }) ->
     erlduce_utils:sem_wait(SemMerge),
     {Time, _} = timer:tc(fun()->
-        [Write(Item) || Item <- Items], ok
+        [Merge(K,V) || {K,V} <- Items], ok
     end),
     erlduce_utils:sem_signal(SemMerge),
     erlduce_job:update_counter(Master, reduce_time, Time),
@@ -214,29 +217,37 @@ p_list_index(E, [E|_T], Pos) -> Pos;
 p_list_index(E, [_|T], Pos) -> p_list_index(E,T,Pos+1);
 p_list_index(_E, [], _Pos) -> false.
 
-p_write_fun(undefined,undefined) ->
-    undefined;
+% p_write_fun(undefined,undefined) ->
+%     undefined;
 p_write_fun(undefined,Reduce) when is_function(Reduce) ->
     p_write_acc_fun();
 p_write_fun(Combine,undefined) when is_function(Combine) ->
     p_write_combine_fun(Combine).
 
 p_write_acc_fun() ->
-    fun({K,V})->
+    fun(K,V)->
         case get(K) of
             undefined -> put(K,[V]);
             L -> put(K, [V|L])
-        end,
-        p_write_acc_fun()
+        end
     end.
 p_write_combine_fun(Combine) ->
-    fun({K,V})->
+    fun(K,V)->
         case get(K) of
             undefined -> put(K,V);
             Old -> put(K, Combine(K, V, Old))
-        end,
-        p_write_combine_fun(Combine)
+        end
     end.
+
+p_merge_fun(undefined,Reduce) when is_function(Reduce) ->
+    fun(K,V)->
+        case get(K) of
+            undefined -> put(K,V);
+            L -> put(K, V++L)
+        end
+    end;
+p_merge_fun(Combine,undefined) when is_function(Combine) ->
+    p_write_combine_fun(Combine).
 
 
 p_map_worker(Slave, Master, {BlobID, Path, Hosts}, Slaves, {SemMap,SemMerge}, Write, Map, Part) ->
@@ -253,14 +264,10 @@ p_map_worker(Slave, Master, {BlobID, Path, Hosts}, Slaves, {SemMap,SemMerge}, Wr
             erlduce_utils:sem_signal(SemMerge),
             erlduce_utils:sem_signal(SemMap),
             erlduce_job:update_counter(Master,[{input_bytes, byte_size(Bytes)}, {map_time, MapTime} ]),
-            case Write of
-                undefined -> erlduce_job:slave_ack_input_all(Master, BlobID);
-                _ ->
-                    {ShuffleTime,_} = timer:tc(fun()->
-                        p_combine_worker_dispatch(BlobID, Items, Slaves, Part)
-                    end),
-                    erlduce_job:update_counter(Master, shuffle_time, ShuffleTime)
-            end;
+            {ShuffleTime,_} = timer:tc(fun()->
+                p_combine_worker_dispatch(BlobID, Items, Slaves, Part)
+            end),
+            erlduce_job:update_counter(Master, shuffle_time, ShuffleTime);
         Error ->
             exit({error,{BlobID, Error}})
     end.
@@ -273,9 +280,7 @@ p_combine_worker_dispatch(BlobID, Items, Slaves, Partition) ->
         array:set(I, [Rec|L], Acc)
     end, Acc0, Items),
     Buf = lists:zip(Slaves,array:to_list(Buf0)),
-    erlduce_utils:pmap(fun({Pid,Data})->
-        erlduce_slave:merge(Pid, BlobID, Data)
-    end, Buf),
+    [erlduce_slave:merge(Pid, BlobID, Data) || {Pid,Data} <- Buf],
     ok.
 
 
@@ -300,18 +305,18 @@ p_flush_to_disk_2(Dir, Idx) ->
 
 
 p_reduce_mem(Idx,Reduce,Output) ->
-    Items = case Reduce of
+    Sorted = lists:keysort(1,erlang:erase()),
+    case Reduce of
         undefined ->
-            erlang:erase();
+            Output2 = lists:foldl( fun(Item,OutFun) ->
+                OutFun(Item)
+            end, Output({open,Idx}), Sorted),
+            Output2(close),
+            ok;
+
         Fun when is_function(Fun) ->
-            lists:flatmap(fun({Key,Values}) -> Fun(Key,Values) end, erlang:erase())
-    end,
-    case Items of
-        [] -> ok;
-        _ ->
-            Sorted = lists:keysort(1,Items),
-            Output2 = lists:foldl( fun(Item,Fun) ->
-                Fun(Item)
+            Output2 = lists:foldl( fun({Key,Val},Fun) ->
+                Reduce(Key,Val,Fun)
             end, Output({open,Idx}), Sorted),
             Output2(close),
             ok
