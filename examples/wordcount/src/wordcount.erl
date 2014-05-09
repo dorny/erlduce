@@ -33,9 +33,12 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         end},
         % uncoment this to have only one output partition
         % {partition, fun(_Key)-> 0 end},
-        {output, edfs_lib:iter_write_list(100000, Dest, 1, fun(Data)->
-            [ [Word, " ", integer_to_list(Count), "\n"] || {Word, Count} <- Data]
-        end)},
+
+        % uncoment this to have actual output
+        % {output, edfs_lib:iter_write_list(100000, Dest, 1, fun(Data)->
+        %     [ [Word, " ", integer_to_list(Count), "\n"] || {Word, Count} <- Data]
+        % end)},
+        {output, fun edfs_lib:null_writter/1},
         {progress, fun(P) -> io:format("done: ~p%~n",[P]) end }
 
     ]),
