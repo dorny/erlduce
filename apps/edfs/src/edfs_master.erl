@@ -14,6 +14,7 @@
     mkblob/3,
     mkdir/1,
     mkfile/1,
+    mv/2,
     register_blob/2,
     rm/1,
     stat/1,
@@ -32,6 +33,7 @@
     p_mkblob/4,
     p_mkdir/1,
     p_mkfile/1,
+    p_mv/2,
     p_register_blob/2,
     p_rm/1,
     p_stat/1
@@ -87,6 +89,9 @@ mkdir(Path) when is_binary(Path) ->
 
 mkfile(Path) when is_binary(Path) ->
     ?RPC(p_mkfile, [Path]).
+
+mv(Src,Dest) when is_binary(Src), is_binary(Dest)->
+    ?RPC(p_mv, [Src,Dest]).
 
 register_blob(BlobID, Host) ->
     ?RPC(p_register_blob, [BlobID, Host]).
@@ -351,18 +356,55 @@ p_mkfile(Filepath) ->
 p_mkfile(ParentInode, Filename) ->
     case mnesia:read(edfs_rec, ParentInode) of
         [Parent=#edfs_rec{type=directory, children=Children}] ->
-            case gb_trees:lookup(Filename, Children) of
-                none ->
+            case gb_trees:is_defined(Filename, Children) of
+                false ->
                     NewInode = p_next_inode(),
                     Children2 = gb_trees:insert(Filename, NewInode, Children),
                     mnesia:write(Parent#edfs_rec{children=Children2}),
                     mnesia:write(#edfs_rec{inode=NewInode, type=regular, children=0}),
                     {ok, NewInode};
-                _ ->
+                true ->
                     {error, eexist}
             end;
         [_] ->
             {error, enotdir}
+    end.
+
+p_mv(SrcPath,DestPath) ->
+    SrcParts = filename:split(SrcPath),
+    DestParts = filename:split(DestPath),
+    {SrcParentParts,[SrcFilename]} = lists:split(length(SrcParts)-1, SrcParts),
+    {DestParentParts,[DestFilename]} = lists:split(length(DestParts)-1, DestParts),
+
+    mnesia:activity(transaction, fun()->
+
+        case {p_get_inode(SrcParentParts), p_get_inode(SrcPath)} of
+            {{ok, SrcParentInode},{ok, SrcInode}} ->
+                case p_get_inode(DestParentParts) of
+                    {ok,DestParentInode} ->
+                        p_mv2(SrcParentInode, SrcInode, SrcFilename, DestParentInode, DestFilename);
+                    Error -> Error
+                end;
+            _ -> {error, enoent}
+        end
+    end).
+p_mv2(SrcParentInode, SrcInode, SrcFilename, DestParentInode, DestFilename) ->
+    case mnesia:wread({edfs_rec, DestParentInode}) of
+        [Rec=#edfs_rec{type=directory, children=Children}] ->
+            case gb_trees:lookup(DestFilename, Children) of
+                none ->
+                    ok=p_unlink(SrcParentInode,SrcFilename),
+                    Children2 = gb_trees:insert(DestFilename, SrcInode, Children),
+                    mnesia:write(Rec#edfs_rec{children=Children2});
+                {_,Inode} ->
+                    case p_stat(Inode) of
+                        {ok, {_, directory}} ->
+                            p_mv2(SrcParentInode, SrcInode, SrcFilename, Inode, SrcFilename);
+                        _ ->
+                            {error, eexist}
+                    end
+            end;
+        _ -> {error, enotdir}
     end.
 
 

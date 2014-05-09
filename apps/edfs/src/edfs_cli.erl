@@ -11,6 +11,7 @@
     cmd_ls/1,
     cmd_mkdir/1,
     cmd_mkfile/1,
+    cmd_mv/1,
     cmd_rm/1
 ]).
 
@@ -42,6 +43,7 @@ cmd_help(_Args) ->
         "  ls~n",
         "  mkdir~n",
         "  mkfile~n",
+        "  mv~n",
         "  rm~n",
         "  stop~n",
         "  help~n",
@@ -135,6 +137,18 @@ cmd_mkfile(Args) ->
         {error,Reason} ->
             io:fwrite(standard_error,"error: ~p: ~p~n",[Path,Reason])
     end || Path <- Paths],
+    halt().
+
+
+cmd_mv(Args) ->
+    {_, Paths} = erlduce_utils:getopts([], Args, [], 2, infinity, "edfs mv", "[FILE... DEST]\nMove FILE(s) or DIRECTORY(ies)"),
+    erlduce_cli:ensure_connect(),
+    {SrcPaths,[Dest]} = lists:split(length(Paths)-1, Paths),
+    [case edfs:mv(Path,Dest) of
+        ok -> ok;
+        {error,Reason} ->
+            io:fwrite(standard_error,"error: ~p: ~p~n",[Path,Reason])
+    end || Path <- SrcPaths ],
     halt().
 
 

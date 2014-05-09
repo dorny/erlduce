@@ -19,6 +19,7 @@
     ls/1,
     mkdir/1,
     mkfile/1,
+    mv/2,
     read/1,
     rm/1,
     stat/1,
@@ -130,6 +131,10 @@ stat(Path) ->
 
 mkfile(Path)->
     edfs_master:mkfile(p_as_binary(Path)).
+
+
+mv(Src,Dest) ->
+    edfs_master:mv(p_as_binary(Src),p_as_binary(Dest)).
 
 
 write(Inode, Bytes, Replicas) when is_integer(Inode) ->
