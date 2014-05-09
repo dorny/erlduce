@@ -5,7 +5,8 @@
 -export([
     read_file/3,
     split/3,
-    iter_write_list/4
+    iter_write_list/4,
+    null_writter/1
 ]).
 
 
@@ -109,3 +110,7 @@ iter_write_list(Len, Inode, Replicas, Encode, Acc, AccLen) ->
                 Error -> exit(Error)
             end
     end.
+
+
+
+null_writter(_) -> fun null_writter/1.
