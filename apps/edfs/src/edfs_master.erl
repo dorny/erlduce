@@ -375,9 +375,7 @@ p_mv(SrcPath,DestPath) ->
     DestParts = filename:split(DestPath),
     {SrcParentParts,[SrcFilename]} = lists:split(length(SrcParts)-1, SrcParts),
     {DestParentParts,[DestFilename]} = lists:split(length(DestParts)-1, DestParts),
-
     mnesia:activity(transaction, fun()->
-
         case {p_get_inode(SrcParentParts), p_get_inode(SrcPath)} of
             {{ok, SrcParentInode},{ok, SrcInode}} ->
                 case p_get_inode(DestParentParts) of
@@ -394,8 +392,7 @@ p_mv2(SrcParentInode, SrcInode, SrcFilename, DestParentInode, DestFilename) ->
             case gb_trees:lookup(DestFilename, Children) of
                 none ->
                     ok=p_unlink(SrcParentInode,SrcFilename),
-                    Children2 = gb_trees:insert(DestFilename, SrcInode, Children),
-                    mnesia:write(Rec#edfs_rec{children=Children2});
+                    ok=p_link(DestParentInode, {DestFilename,SrcInode});
                 {_,Inode} ->
                     case p_stat(Inode) of
                         {ok, {_, directory}} ->
@@ -439,15 +436,6 @@ p_rm(ParentInode, Filename) ->
             end;
         _ -> {error, enoent}
     end.
-p_unlink(ParentInode, Filename) ->
-    mnesia:activity(transaction, fun()->
-        case mnesia:read(edfs_rec, ParentInode) of
-            [Parent=#edfs_rec{type=directory, children=Children}] ->
-                Children2 = gb_trees:delete(Filename, Children),
-                mnesia:write(Parent#edfs_rec{children=Children2});
-            _ -> ok
-        end
-    end).
 p_rmf(Inode) ->
     case mnesia:dirty_read(edfs_rec, Inode) of
         [#edfs_rec{type=directory, children=Children}] ->
@@ -512,6 +500,28 @@ p_next_inode() ->
             NextInode ->
                 mnesia:delete({edfs_inodes, NextInode}),
                 NextInode
+        end
+    end).
+
+
+p_unlink(ParentInode, Filename) ->
+    mnesia:activity(transaction, fun()->
+        case mnesia:read(edfs_rec, ParentInode) of
+            [Parent=#edfs_rec{type=directory, children=Children}] ->
+                Children2 = gb_trees:delete(Filename, Children),
+                mnesia:write(Parent#edfs_rec{children=Children2});
+            _ -> ok
+        end
+    end).
+
+
+p_link(ParentInode, Rec={Filename, Inode}) ->
+    mnesia:activity(transaction, fun()->
+        case mnesia:read(edfs_rec, ParentInode) of
+            [Parent=#edfs_rec{type=directory, children=Children}] ->
+                Children2 = gb_trees:insert(Filename, Inode, Children),
+                mnesia:write(Parent#edfs_rec{children=Children2});
+            _ -> ok
         end
     end).
 
