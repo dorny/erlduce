@@ -151,16 +151,16 @@ handle_cast( {slave_ack_input,BlobID}, State=#state{ blobs_taken=BlobsTaken, sla
     State2 = case ets:update_counter(BlobsTaken, BlobID, {2,1}) of
         Count ->
             ets:delete(BlobsTaken, BlobID),
-            p_check_is_done(self(), BlobsTaken, Slaves),
             LastProg = p_progress(State),
+            p_check_is_done(self(), BlobsTaken, Slaves),
             State#state{ total_done=TotalDone+1, last_progress=LastProg };
         _ -> State
     end,
     {noreply, State2};
 handle_cast( {slave_ack_input_all, BlobID}, State=#state{ blobs_taken=BlobsTaken, slaves=Slaves, total_done=TotalDone }) ->
     ets:delete(BlobsTaken, BlobID),
-    p_check_is_done(self(), BlobsTaken, Slaves),
     LastProg = p_progress(State),
+    p_check_is_done(self(), BlobsTaken, Slaves),
     {noreply, State#state{ total_done=TotalDone+1, last_progress=LastProg }};
 
 
