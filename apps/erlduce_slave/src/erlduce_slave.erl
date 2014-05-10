@@ -339,7 +339,7 @@ p_combine_files_fun(Combine,Output) ->
 
 p_reduce_files_fun(Reduce, Output) ->
     fun ({Key,Values})->
-            Output2 = Reduce(Key,Values,Output),
+            Output2 = Reduce(Key, lists:append(Values), Output),
             p_reduce_files_fun(Reduce,Output2);
         (close) ->
             Output(close)
