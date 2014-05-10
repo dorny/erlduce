@@ -235,58 +235,33 @@ merge_files(Files, Fun) ->
             {ok, Fd} ->
                 case file_read_record(Fd) of
                     eof -> Acc;
-                    {ok, KV} -> [{KV,Fd}| Acc];
+                    {ok, {K,V}} -> p_tree_acc(K, {V,Fd}, Acc);
                     Error -> exit(Error)
                 end;
             Error -> exit(Error)
         end
-    end, [], Files),
+    end, gb_trees:empty(), Files),
     p_merge_files_loop(Queue,Fun).
-
 p_merge_files_loop(Queue, Fun) ->
-    Key = p_merge_files_next_key(Queue),
-    p_merge_files_loop(Key,Queue, Fun).
-p_merge_files_loop(Key, Queue, Fun) ->
-    {Queue2, Vals} = p_merge_files_read_round(Key,Queue),
-    Fun2 = Fun({Key,Vals}),
-    case Queue2 of
-        [] -> Fun2;
+    case gb_trees:size(Queue) of
+        0 -> Fun;
         _ ->
-            Key2 = p_merge_files_next_key(Queue2),
-            p_merge_files_loop(Key2,Queue2, Fun2)
+            {Key, L, AccQ0} = gb_trees:take_smallest(Queue),
+            {Values,Queue2} = lists:foldl(fun({V,Fd}, {AccV,AccQ})->
+                AccV2 = [V|AccV],
+                case file_read_record(Fd) of
+                    eof -> {AccV2, AccQ};
+                    {ok, {K2,V2}} -> {AccV2, p_tree_acc(K2, {V2,Fd}, AccQ)};
+                    Error -> exit(Error)
+                end
+            end, {[],AccQ0}, L),
+            Fun2 = Fun({Key,Values}),
+            p_merge_files_loop(Queue2, Fun2)
     end.
-
-p_merge_files_next_key([{{K,_V},_}|T]) ->
-    p_merge_files_next_key(T,K).
-p_merge_files_next_key([{{K,_V},_}|T], Min) ->
-    if
-        K<Min -> p_merge_files_next_key(T,K);
-        true -> p_merge_files_next_key(T,Min)
-    end;
-p_merge_files_next_key([], Min) ->
-    Min.
-
-p_merge_files_read_round(Key,Queue) ->
-    lists:foldl(fun
-        ({{K,V}, Fd}, {OutQ,Vals}) when K=:=Key ->
-            case p_merge_files_read_records(K,Fd,[V|Vals]) of
-                {eof, NewVals} ->
-                    file:close(Fd),
-                    {OutQ, NewVals};
-                {KVF, NewVals} ->
-                    {[KVF|OutQ], NewVals}
-            end;
-        (KVF, {OutQ,Vals}) ->
-            {[KVF|OutQ], Vals}
-    end, {[], []}, Queue).
-p_merge_files_read_records(Key, Fd, Acc) ->
-    case file_read_record(Fd) of
-        {ok, {Key,Val}} ->
-            p_merge_files_read_records(Key,Fd,[Val|Acc]);
-        {ok, KV} ->
-            {{KV, Fd}, Acc};
-        eof ->
-            {eof, Acc}
+p_tree_acc(K,V, Q) ->
+    case gb_trees:lookup(K, Q) of
+        none -> gb_trees:insert(K, [V], Q);
+        {value, Acc} -> gb_trees:update(K, [V|Acc], Q)
     end.
 
 
