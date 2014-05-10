@@ -5,6 +5,7 @@
 -export([
     read_file/3,
     split/3,
+    iter_write_list/3,
     iter_write_list/4,
     null_writter/1
 ]).
@@ -80,14 +81,17 @@ read_lines(IoDev, Number, Acc) ->
     end.
 
 
-
-iter_write_list(Len, Path, Replicas, Encode) ->
+iter_write_list(LenDef, Path, Replicas) ->
+    iter_write_list(LenDef, Path, Replicas, fun erlang:term_to_binary/1).
+iter_write_list({LimitType,Limit0}, Path, Replicas, Encode) ->
+    AccLimit = erlduce_utils:parse_size(Limit0),
+    AddLen = p_iter_add_len(LimitType),
     fun({open, TaskIndex}) ->
         File = filename:join(Path,integer_to_list(TaskIndex)),
         {ok, Inode} = edfs:mkfile(File),
-        iter_write_list(Len-1, Inode, Replicas, Encode, [], 0)
+        p_iter_write_list(Inode, Replicas, Encode, [], 0, AccLimit, AddLen)
     end.
-iter_write_list(Len, Inode, Replicas, Encode, Acc, AccLen) ->
+p_iter_write_list(Inode, Replicas, Encode, Acc, AccLen, AccLimit, AddLen) ->
     fun
         (close) ->
             case AccLen of
@@ -100,16 +104,25 @@ iter_write_list(Len, Inode, Replicas, Encode, Acc, AccLen) ->
                     end
             end;
 
-        (Item) when AccLen<Len ->
-            iter_write_list(Len, Inode, Replicas, Encode, [Item|Acc], AccLen+1);
+        (Item) when AccLen<AccLimit ->
+            Acc2 = [Item|Acc],
+            AccLen2 = AddLen(Item,AccLen),
+            p_iter_write_list(Inode, Replicas, Encode, Acc2, AccLen2, AccLimit, AddLen);
 
         (Item) ->
-            Bytes = Encode(lists:reverse([Item|Acc])),
+            Bytes = Encode(lists:reverse(Acc)),
             case edfs:write(Inode, Bytes, Replicas) of
-                ok -> iter_write_list(Len,Inode,Replicas,Encode,[],0);
+                ok ->
+                    Acc2 = [Item],
+                    AccLen2 = AddLen(Item,0),
+                    p_iter_write_list(Inode, Replicas, Encode, Acc2, AccLen2, AccLimit, AddLen);
                 Error -> exit(Error)
             end
     end.
+p_iter_add_len(length) ->
+    fun(_Item,Acc) -> Acc+1 end;
+p_iter_add_len(size) ->
+    fun(Item,Acc) -> Acc+erlang:external_size(Item)-2 end.
 
 
 

@@ -41,7 +41,8 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         {combine, fun(_Key, A,B) ->
             A+B
         end},
-        {output, edfs_lib:iter_write_list(100000, OutDir1, 1, fun erlang:term_to_binary/1)}
+        % {output, edfs_lib:iter_write_list(100000, OutDir1, 1, fun erlang:term_to_binary/1)}
+        {output, edfs_lib:iter_write_list({size,"32MB"}, OutDir1, 1)}
     ]),
     erlduce_job:wait(Pid),
 
@@ -61,7 +62,7 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
                 Write({{Word, DocID}, {WordCount, WordsInDoc}})
             end, Write0, Values)
         end},
-        {output, edfs_lib:iter_write_list(100000, OutDir2, 1, fun erlang:term_to_binary/1)}
+        {output, edfs_lib:iter_write_list({size,"32MB"}, OutDir2, 1)}
     ]),
     erlduce_job:wait(Pid2),
 
@@ -80,8 +81,7 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
             end, Write0, Values)
         end},
         % {output, fun edfs_lib:null_writter/1}
-        % {output, edfs_lib:iter_write_list(100000, Dest, 1, fun erlang:term_to_binary/1)}
-        {output, edfs_lib:iter_write_list(100000, Dest, 1, fun(Data)->
+        {output, edfs_lib:iter_write_list({size,"32MB"}, Dest, 1, fun(Data)->
             [ [Word, "\t", DocID,"\t", float_to_list(TfIDF), "\n"] || {{Word, DocID}, TfIDF} <- Data]
         end)}
     ]),

@@ -35,7 +35,7 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         % {partition, fun(_Key)-> 0 end},
 
         % uncoment this to have actual output
-        % {output, edfs_lib:iter_write_list(100000, Dest, 1, fun(Data)->
+        % {output, edfs_lib:iter_write_list({length, 10000}, Dest, 1, fun(Data)->
         %     [ [Word, " ", integer_to_list(Count), "\n"] || {Word, Count} <- Data]
         % end)},
         {output, fun edfs_lib:null_writter/1},
