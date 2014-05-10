@@ -46,6 +46,7 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         {progress, fun(P) -> io:format("done: ~p%~n",[P]) end }
     ]),
     erlduce_job:wait(Pid),
+    io:format("====== STAGE 1 DONE ======~n~n"),
 
     edfs:rm(OutDir2),
     edfs:mkdir(OutDir2),
@@ -67,6 +68,7 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         {progress, fun(P) -> io:format("done: ~p%~n",[P]) end }
     ]),
     erlduce_job:wait(Pid2),
+    io:format("====== STAGE 2 DONE ======~n~n"),
 
     {ok,Pid3} = erlduce_job:start_link(Slaves, [
         {id, {RunID,3}},
@@ -89,6 +91,7 @@ start(RunID, Slaves, Args=[Src, Dest]) ->
         {progress, fun(P) -> io:format("done: ~p%~n",[P]) end }
     ]),
     erlduce_job:wait(Pid3),
+    io:format("====== JOB DONE ======~n"),
 
     ok.
 
